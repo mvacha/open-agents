@@ -38,12 +38,18 @@ function cwdIsOutsideWorkingDirectory(cwd: string | undefined): boolean {
  * Create a combined approval function for bash operations.
  * Always requires approval if cwd is outside working directory,
  * then checks command safety and user-provided option.
+ * In background mode, auto-approve all operations (except outside working directory).
  */
 function createBashApprovalFn(options?: ToolOptions): ApprovalFn {
   return async (args) => {
-    // Always need approval if cwd is outside working directory
+    // Always need approval if cwd is outside working directory (even in background mode)
     if (cwdIsOutsideWorkingDirectory(args.cwd)) {
       return true;
+    }
+
+    // In background mode, auto-approve all operations within working directory
+    if (sharedContext.mode === "background") {
+      return false;
     }
 
     // Check command safety

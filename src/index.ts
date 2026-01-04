@@ -10,4 +10,6 @@ export type {
   TodoItem,
   TodoStatus,
   MemoryEntry,
+  AgentMode,
+  BuildSystemPromptOptions,
 } from "./agent";

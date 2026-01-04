@@ -151,14 +151,54 @@ When requirements are ambiguous or multiple approaches are viable:
 - Link to files when mentioning them using \`file://\` URLs
 - After completing work, summarize: what changed, verification results, next action if any`;
 
-export function buildSystemPrompt(options: {
+const BACKGROUND_MODE_INSTRUCTIONS = `# Background Mode - Ephemeral Sandbox
+
+Your sandbox is ephemeral. All work is lost when the session ends unless committed and pushed to git.
+
+## Checkpointing Rules
+
+1. **Commit after every meaningful change** - new file, completed function, fixed bug
+2. **Push immediately after each commit** - don't batch commits
+3. **Commit BEFORE long operations** - package installs, builds, test runs
+4. **Use clear WIP messages** - "WIP: add user authentication endpoint"
+5. **When in doubt, checkpoint** - it's better to have extra commits than lost work
+
+## Git Workflow
+
+- Push with: \`git push -u origin {branch}\`
+- Your work is only safe once pushed to remote
+- If push fails, retry once then report the failure - do not proceed with more work until push succeeds
+
+## On Task Completion
+
+- Squash WIP commits into logical units if appropriate
+- Write a final commit message summarizing changes
+- Ensure all changes are pushed before reporting completion`;
+
+export interface BuildSystemPromptOptions {
   cwd?: string;
+  mode?: "interactive" | "background";
+  currentBranch?: string;
   customInstructions?: string;
-}): string {
+}
+
+export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
   const parts = [DEEP_AGENT_SYSTEM_PROMPT];
 
   if (options.cwd) {
     parts.push(`\n# Environment\n\nWorking directory: ${options.cwd}`);
+  }
+
+  if (options.mode === "background") {
+    if (!options.currentBranch) {
+      throw new Error("Background mode requires currentBranch to be set.");
+    }
+    const backgroundInstructions = BACKGROUND_MODE_INSTRUCTIONS.replace(
+      "{branch}",
+      options.currentBranch
+    );
+    parts.push(`\nCurrent branch: ${options.currentBranch}`);
+    parts.push(`\n${backgroundInstructions}`);
   }
 
   if (options.customInstructions) {

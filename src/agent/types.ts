@@ -26,8 +26,17 @@ export interface MemoryStore {
   entries: MemoryEntry[];
 }
 
+/**
+ * Agent execution modes that control behavior based on execution context.
+ *
+ * - 'interactive': Human in the loop, local development. Tool approval required for writes/bash.
+ * - 'background': Async execution, cloud sandbox. Auto-approve all tools, checkpoint via git.
+ */
+export type AgentMode = "interactive" | "background";
+
 export interface AgentContext {
   sandbox: Sandbox;
+  mode: AgentMode;
 }
 
 export const EVICTION_THRESHOLD_BYTES = 80 * 1024;
