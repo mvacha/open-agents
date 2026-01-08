@@ -32,6 +32,7 @@
 - [ ] add slash commands
 - [ ] add ability to alt arrow between input box
 - [ ] interrupt conversation (stop) if no reason is passed to approval request 
+- [ ] diff viewer shouldn't show diff if creating file! 
 
 ---
 sandbox related:
