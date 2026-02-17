@@ -48,11 +48,21 @@ import { TaskGroupView } from "@/components/task-group-view";
 import { ToolCall } from "@/components/tool-call";
 import { Button } from "@/components/ui/button";
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
 import {
   Tooltip,
   TooltipContent,
@@ -1490,19 +1500,19 @@ export function SessionChatContent() {
   return (
     <div className="flex h-dvh overflow-hidden bg-background text-foreground">
       {/* Desktop sidebar */}
-      <aside className="hidden w-72 shrink-0 border-r border-border bg-muted/20 md:flex md:flex-col">
+      <aside className="hidden w-72 shrink-0 flex-col border-r border-border bg-muted/20 md:flex">
         {sidebarContent}
       </aside>
 
-      {/* Mobile sidebar Sheet */}
-      <Sheet open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
-        <SheetContent side="left" className="flex w-72 flex-col p-0">
-          <SheetHeader className="sr-only">
-            <SheetTitle>Navigation</SheetTitle>
-          </SheetHeader>
+      {/* Mobile sidebar Drawer */}
+      <Drawer open={mobileSidebarOpen} onOpenChange={setMobileSidebarOpen}>
+        <DrawerContent className="h-[85dvh] md:hidden">
+          <DrawerHeader className="sr-only">
+            <DrawerTitle>Navigation</DrawerTitle>
+          </DrawerHeader>
           {sidebarContent}
-        </SheetContent>
-      </Sheet>
+        </DrawerContent>
+      </Drawer>
 
       {/* Main chat area */}
       <div className="flex min-w-0 flex-1 flex-col">
@@ -1569,19 +1579,40 @@ export function SessionChatContent() {
               </span>
             </div>
             <div className="flex items-center gap-1 md:gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  void archiveSession().catch((error) => {
-                    console.error("Failed to archive session:", error);
-                  });
-                  router.push("/");
-                }}
-              >
-                <Archive className="h-4 w-4 md:mr-2" />
-                <span className="hidden md:inline">Archive</span>
-              </Button>
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button variant="ghost" size="sm">
+                    <Archive className="h-4 w-4 md:mr-2" />
+                    <span className="hidden md:inline">Archive</span>
+                  </Button>
+                </DialogTrigger>
+                <DialogContent showCloseButton={false}>
+                  <DialogHeader>
+                    <DialogTitle>Archive session?</DialogTitle>
+                    <DialogDescription>
+                      This will stop the sandbox and archive the session. You
+                      can still view it in the archive tab.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter>
+                    <DialogClose asChild>
+                      <Button variant="outline">Cancel</Button>
+                    </DialogClose>
+                    <DialogClose asChild>
+                      <Button
+                        onClick={() => {
+                          void archiveSession().catch((error: unknown) => {
+                            console.error("Failed to archive session:", error);
+                          });
+                          router.push("/");
+                        }}
+                      >
+                        Archive
+                      </Button>
+                    </DialogClose>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
               {!supportsDiff ? (
                 <Tooltip>
                   <TooltipTrigger asChild>

@@ -1,10 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import { ChevronDown, ChevronRight, FileText, Loader2 } from "lucide-react";
 import { PatchDiff } from "@pierre/diffs/react";
-import { cn } from "@/lib/utils";
-import { defaultDiffOptions, splitDiffOptions } from "@/lib/diffs-config";
+import { ChevronDown, ChevronRight, FileText, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import type { DiffFile } from "@/app/api/sessions/[sessionId]/diff/route";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,7 +12,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { DiffFile } from "@/app/api/sessions/[sessionId]/diff/route";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { defaultDiffOptions, splitDiffOptions } from "@/lib/diffs-config";
+import { cn } from "@/lib/utils";
 import { useSessionChatContext } from "./session-chat-context";
 
 type DiffViewerProps = {
@@ -135,6 +136,7 @@ function FileEntry({
 export function DiffViewer({ open, onOpenChange }: DiffViewerProps) {
   const { diff, diffLoading, diffError, diffCachedAt, sandboxInfo } =
     useSessionChatContext();
+  const isMobile = useIsMobile();
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
   const [diffStyle, setDiffStyle] = useState<DiffStyle>("unified");
 
@@ -163,6 +165,12 @@ export function DiffViewer({ open, onOpenChange }: DiffViewerProps) {
     setExpandedFiles(new Set());
   };
 
+  useEffect(() => {
+    if (isMobile && diffStyle !== "unified") {
+      setDiffStyle("unified");
+    }
+  }, [diffStyle, isMobile]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -187,8 +195,8 @@ export function DiffViewer({ open, onOpenChange }: DiffViewerProps) {
               )}
             </div>
             <div className="flex items-center gap-1">
-              {/* Unified / Split toggle */}
-              <div className="flex items-center rounded-md border border-border">
+              {/* Unified / Split toggle - hidden on mobile, unified forced */}
+              <div className="hidden items-center rounded-md border border-border md:flex">
                 <button
                   type="button"
                   onClick={() => setDiffStyle("unified")}
