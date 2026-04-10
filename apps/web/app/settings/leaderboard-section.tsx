@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Image from "next/image";
 import useSWR from "swr";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -207,20 +208,33 @@ export function LeaderboardSection() {
                         {index + 1}
                       </TableCell>
                       <TableCell className="whitespace-normal">
-                        <div className="min-w-0">
-                          <div className="font-medium">
-                            {row.name?.trim() || row.username}
-                            {isCurrentUser ? (
-                              <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                                (you)
-                              </span>
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          {row.avatarUrl ? (
+                            <Image
+                              src={row.avatarUrl}
+                              alt={row.username}
+                              width={28}
+                              height={28}
+                              className="h-7 w-7 shrink-0 rounded-full"
+                            />
+                          ) : (
+                            <div className="h-7 w-7 shrink-0 rounded-full bg-muted" />
+                          )}
+                          <div className="min-w-0">
+                            <div className="font-medium">
+                              {row.name?.trim() || row.username}
+                              {isCurrentUser ? (
+                                <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                                  (you)
+                                </span>
+                              ) : null}
+                            </div>
+                            {row.name?.trim() ? (
+                              <div className="text-xs text-muted-foreground">
+                                @{row.username}
+                              </div>
                             ) : null}
                           </div>
-                          {row.name?.trim() ? (
-                            <div className="text-xs text-muted-foreground">
-                              @{row.username}
-                            </div>
-                          ) : null}
                         </div>
                       </TableCell>
                       <TableCell className="text-right font-mono font-medium tabular-nums">

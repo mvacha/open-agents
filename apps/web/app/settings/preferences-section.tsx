@@ -367,40 +367,6 @@ export function PreferencesSection() {
             </p>
           </div>
 
-          {/* Notifications */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between gap-4">
-              <div className="space-y-0.5">
-                <Label htmlFor="alerts-enabled">Alerts</Label>
-                <p className="text-xs text-muted-foreground">
-                  Notify when a background agent finishes.
-                </p>
-              </div>
-              <Switch
-                id="alerts-enabled"
-                checked={preferences?.alertsEnabled ?? true}
-                onCheckedChange={handleAlertsEnabledChange}
-                disabled={isSaving}
-              />
-            </div>
-            {(preferences?.alertsEnabled ?? true) && (
-              <div className="flex items-center justify-between gap-4 pl-4">
-                <div className="space-y-0.5">
-                  <Label htmlFor="alert-sound-enabled">Alert sound</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Play a sound with alerts.
-                  </p>
-                </div>
-                <Switch
-                  id="alert-sound-enabled"
-                  checked={preferences?.alertSoundEnabled ?? true}
-                  onCheckedChange={handleAlertSoundEnabledChange}
-                  disabled={isSaving}
-                />
-              </div>
-            )}
-          </div>
-
           {/* Environment */}
           <div className="space-y-3">
             <div className="grid gap-2">
@@ -473,6 +439,36 @@ export function PreferencesSection() {
                 disabled={isSaving || !(preferences?.autoCommitPush ?? false)}
               />
             </div>
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-0.5">
+                <Label htmlFor="alerts-enabled">Alerts</Label>
+                <p className="text-xs text-muted-foreground">
+                  Notify when a background agent finishes.
+                </p>
+              </div>
+              <Switch
+                id="alerts-enabled"
+                checked={preferences?.alertsEnabled ?? true}
+                onCheckedChange={handleAlertsEnabledChange}
+                disabled={isSaving}
+              />
+            </div>
+            {(preferences?.alertsEnabled ?? true) && (
+              <div className="flex items-center justify-between gap-4 pl-4">
+                <div className="space-y-0.5">
+                  <Label htmlFor="alert-sound-enabled">Alert sound</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Play a sound with alerts.
+                  </p>
+                </div>
+                <Switch
+                  id="alert-sound-enabled"
+                  checked={preferences?.alertSoundEnabled ?? true}
+                  onCheckedChange={handleAlertSoundEnabledChange}
+                  disabled={isSaving}
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>
