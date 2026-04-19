@@ -46,8 +46,9 @@ export interface VercelSandboxConfig {
   /** GitHub token used for credential brokering; never exposed inside the sandbox. */
   githubToken?: string;
   /**
-   * Number of vCPUs (1-8). Each vCPU provides 2048 MB of memory.
-   * @default 4
+   * Number of vCPUs. Each vCPU provides 2048 MB of memory.
+   * Hobby plan caps this at 2; Pro/Enterprise allow up to 8.
+   * @default 2
    */
   vcpus?: number;
   /**
