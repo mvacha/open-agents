@@ -67,7 +67,7 @@ function buildCreateConfig(
           source: {
             url: state.source.repo,
             branch: state.source.branch,
-            token: state.source.token,
+            token: state.source.token ?? options?.githubToken,
             newBranch: state.source.newBranch,
           },
         }
