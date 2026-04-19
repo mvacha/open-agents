@@ -42,69 +42,20 @@ const DEFAULT_NETWORK_POLICY: SandboxNetworkPolicy = {
 };
 
 function buildGitHubCredentialBrokeringPolicy(
-  token?: string,
+  _token?: string,
 ): SandboxNetworkPolicy {
-  if (!token) {
-    return DEFAULT_NETWORK_POLICY;
-  }
-
-  const basicAuthToken = Buffer.from(
-    `x-access-token:${token}`,
-    "utf-8",
-  ).toString("base64");
-
-  return {
-    allow: {
-      "api.github.com": [
-        {
-          transform: [{ headers: { Authorization: `Bearer ${token}` } }],
-        },
-      ],
-      "uploads.github.com": [
-        {
-          transform: [{ headers: { Authorization: `Bearer ${token}` } }],
-        },
-      ],
-      "codeload.github.com": [
-        {
-          transform: [{ headers: { Authorization: `Bearer ${token}` } }],
-        },
-      ],
-      "github.com": [
-        {
-          transform: [
-            { headers: { Authorization: `Basic ${basicAuthToken}` } },
-          ],
-        },
-      ],
-      "*": [],
-    },
-  };
+  // Network policy transformations require a Pro/Enterprise plan.
+  // Git auth is handled via token-embedded remote URLs, so the permissive
+  // default policy is sufficient for Hobby-plan deployments.
+  return DEFAULT_NETWORK_POLICY;
 }
 
 async function syncGitHubCredentialBrokering(
-  sdk: VercelSandboxSDK,
-  token?: string,
+  _sdk: VercelSandboxSDK,
+  _token?: string,
 ): Promise<void> {
-  const updateNetworkPolicy = (
-    sdk as VercelSandboxSDK & {
-      updateNetworkPolicy?: (policy: SandboxNetworkPolicy) => Promise<void>;
-    }
-  ).updateNetworkPolicy;
-
-  if (typeof updateNetworkPolicy !== "function") {
-    if (token) {
-      throw new Error(
-        "Current @vercel/sandbox SDK does not support network policy updates required for GitHub credential brokering",
-      );
-    }
-    return;
-  }
-
-  await updateNetworkPolicy.call(
-    sdk,
-    buildGitHubCredentialBrokeringPolicy(token),
-  );
+  // No-op: credential brokering via network transforms is disabled. Callers
+  // that rotate GitHub tokens rely on the remote URL already carrying creds.
 }
 
 function buildAuthenticatedGitHubUrl(

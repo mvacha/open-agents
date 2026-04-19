@@ -134,7 +134,7 @@ async function main() {
   const result = await refreshBaseSnapshot({
     baseSnapshotId: parsed.baseSnapshotId ?? DEFAULT_SANDBOX_BASE_SNAPSHOT_ID,
     commands: parsed.commands,
-    sandboxTimeoutMs: parsed.sandboxTimeoutMs ?? DEFAULT_SANDBOX_TIMEOUT_MS,
+    sandboxTimeoutMs: parsed.sandboxTimeoutMs ?? 17970000,
     commandTimeoutMs: parsed.commandTimeoutMs,
     ports: DEFAULT_SANDBOX_PORTS,
     log: (message) => console.log(message),
