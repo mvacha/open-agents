@@ -29,8 +29,12 @@ export type SessionWithUnread = Pick<
 
 interface CreateSessionInput {
   title?: string;
+  repoProvider?: "github" | "azure_devops";
   repoOwner?: string;
   repoName?: string;
+  repoMeta?:
+    | { provider: "github" }
+    | { provider: "azure_devops"; project: string };
   branch?: string;
   cloneUrl?: string;
   isNewBranch: boolean;
