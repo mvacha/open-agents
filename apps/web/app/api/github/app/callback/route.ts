@@ -2,6 +2,10 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { encrypt } from "@/lib/crypto";
 import { getGitHubAccount, upsertGitHubAccount } from "@/lib/db/accounts";
+import {
+  gitHubDisabledResponse,
+  isGitHubEnabled,
+} from "@/lib/git-providers/feature-flags";
 import { syncUserInstallations } from "@/lib/github/installations-sync";
 import { getServerSession } from "@/lib/session/get-server-session";
 
@@ -141,6 +145,10 @@ function redirectAndClearCookies(url: string | URL): NextResponse {
 }
 
 export async function GET(req: Request): Promise<Response> {
+  if (!isGitHubEnabled()) {
+    return gitHubDisabledResponse();
+  }
+
   const requestUrl = new URL(req.url);
   const cookieStore = await cookies();
   const redirectTo = sanitizeRedirectTo(

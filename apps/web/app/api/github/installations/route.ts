@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server";
 import { getInstallationsByUserId } from "@/lib/db/installations";
+import {
+  gitHubDisabledResponse,
+  isGitHubEnabled,
+} from "@/lib/git-providers/feature-flags";
 import { getInstallationManageUrl } from "@/lib/github/installation-url";
 import { getServerSession } from "@/lib/session/get-server-session";
 
 export async function GET() {
+  if (!isGitHubEnabled()) {
+    return gitHubDisabledResponse();
+  }
+
   const session = await getServerSession();
 
   if (!session?.user?.id) {

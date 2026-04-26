@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getGitHubAccount } from "@/lib/db/accounts";
 import { getInstallationsByUserId } from "@/lib/db/installations";
+import { isGitHubEnabled } from "@/lib/git-providers/feature-flags";
 import type { GitHubConnectionStatusResponse } from "@/lib/github/connection-status";
 import {
   isGitHubInstallationsAuthError,
@@ -10,6 +11,10 @@ import { getUserGitHubToken } from "@/lib/github/user-token";
 import { getServerSession } from "@/lib/session/get-server-session";
 
 export async function GET() {
+  if (!isGitHubEnabled()) {
+    return NextResponse.json({ enabled: false });
+  }
+
   const session = await getServerSession();
 
   if (!session?.user?.id) {
