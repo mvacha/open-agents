@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { VercelProjectSelection } from "@/lib/vercel/types";
 
+mock.module("server-only", () => ({}));
+
 let currentSession: {
   authProvider?: "vercel" | "github";
   user: {
