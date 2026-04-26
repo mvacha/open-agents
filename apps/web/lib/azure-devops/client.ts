@@ -151,6 +151,7 @@ export function buildAdoClient(apis: AdoApis, orgSlug: string): AdoClient {
         repo,
         {
           sourceRefName: `${REFS_HEADS}${branchName}`,
+          // azure-devops-node-api uses numeric enums; PullRequestStatus.All === 4.
           status: PullRequestStatus.All,
         },
         project,

@@ -204,6 +204,16 @@ export async function POST(req: Request, context: RouteContext) {
 
   const { sessionRecord } = sessionContext;
 
+  if (sessionRecord.repoProvider === "azure_devops") {
+    return Response.json(
+      {
+        error:
+          "Fixing failing checks is only available for GitHub sessions in v1.",
+      },
+      { status: 501 },
+    );
+  }
+
   if (!sessionRecord.repoOwner || !sessionRecord.repoName) {
     return Response.json(
       { error: "Session is not linked to a GitHub repository" },

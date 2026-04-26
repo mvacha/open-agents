@@ -3,10 +3,9 @@ import "server-only";
 import { connectSandbox } from "@open-harness/sandbox";
 import { getSessionById, updateSession } from "@/lib/db/sessions";
 import {
-  findPullRequestByBranch,
-  getPullRequestStatus,
-} from "@/lib/github/client";
-import { getUserGitHubToken } from "@/lib/github/user-token";
+  getProviderForSession,
+  sessionToRepoRef,
+} from "@/lib/git-providers/resolve";
 import { canOperateOnSandbox, clearSandboxState } from "./utils";
 
 type SessionRecord = NonNullable<Awaited<ReturnType<typeof getSessionById>>>;
@@ -24,19 +23,6 @@ interface ArchiveSessionResult {
   archiveTriggered: boolean;
 }
 
-function getSessionRepoUrl(session: SessionRecord): string | null {
-  const cloneUrl = session.cloneUrl?.trim();
-  if (cloneUrl) {
-    return cloneUrl;
-  }
-
-  if (!session.repoOwner || !session.repoName) {
-    return null;
-  }
-
-  return `https://github.com/${session.repoOwner}/${session.repoName}`;
-}
-
 async function refreshArchiveGitState(
   currentSession: SessionRecord,
   logPrefix: string,
@@ -48,6 +34,12 @@ async function refreshArchiveGitState(
   if (!currentSession.repoOwner || !currentSession.repoName) {
     return {};
   }
+
+  const ref = sessionToRepoRef(currentSession);
+  if (!ref) {
+    return {};
+  }
+  const provider = getProviderForSession(currentSession);
 
   try {
     const sandbox = await connectSandbox(currentSession.sandboxState);
@@ -70,25 +62,21 @@ async function refreshArchiveGitState(
       updates.branch = branch;
     }
 
-    const token =
-      (await getUserGitHubToken(currentSession.userId)) ?? undefined;
+    const token = (await provider.getCloneToken(currentSession.userId)) ?? "";
 
     if (!branchChanged && currentSession.prNumber != null) {
-      const repoUrl = getSessionRepoUrl(currentSession);
-      if (repoUrl) {
-        const prStatusResult = await getPullRequestStatus({
-          repoUrl,
-          prNumber: currentSession.prNumber,
-          token,
-        });
+      const prStatusResult = await provider.getPullRequestStatus({
+        ref,
+        prNumber: currentSession.prNumber,
+        token,
+      });
 
-        if (prStatusResult.success && prStatusResult.status) {
-          if (prStatusResult.status !== currentSession.prStatus) {
-            updates.prStatus = prStatusResult.status;
-          }
-
-          return updates;
+      if (prStatusResult.success && prStatusResult.status) {
+        if (prStatusResult.status !== currentSession.prStatus) {
+          updates.prStatus = prStatusResult.status;
         }
+
+        return updates;
       }
     }
 
@@ -96,9 +84,8 @@ async function refreshArchiveGitState(
       return updates;
     }
 
-    const prResult = await findPullRequestByBranch({
-      owner: currentSession.repoOwner,
-      repo: currentSession.repoName,
+    const prResult = await provider.findPullRequestByBranch({
+      ref,
       branchName: branch,
       token,
     });

@@ -369,3 +369,141 @@ describe("/api/sessions POST vercel project linking", () => {
     });
   });
 });
+
+describe("/api/sessions POST provider validation", () => {
+  const ORIGINAL_ADO_ENABLED = process.env.AZURE_DEVOPS_ENABLED;
+  const ORIGINAL_ADO_ORG = process.env.AZURE_DEVOPS_ORG;
+  const ORIGINAL_ADO_PAT = process.env.AZURE_DEVOPS_PAT;
+  const ORIGINAL_GH_ENABLED = process.env.GITHUB_ENABLED;
+
+  beforeEach(() => {
+    createCalls.length = 0;
+    upsertCalls.length = 0;
+    currentSession = {
+      user: { id: "user-1", username: "nico", name: "Nico" },
+    };
+    existingSessionCount = 0;
+    savedLink = null;
+    currentVercelToken = "vercel-token";
+    matchingProjects = [];
+
+    process.env.AZURE_DEVOPS_ENABLED = "true";
+    process.env.AZURE_DEVOPS_ORG = "contoso";
+    process.env.AZURE_DEVOPS_PAT = "pat";
+    process.env.GITHUB_ENABLED = "true";
+  });
+
+  function restoreEnv() {
+    process.env.AZURE_DEVOPS_ENABLED = ORIGINAL_ADO_ENABLED;
+    process.env.AZURE_DEVOPS_ORG = ORIGINAL_ADO_ORG;
+    process.env.AZURE_DEVOPS_PAT = ORIGINAL_ADO_PAT;
+    process.env.GITHUB_ENABLED = ORIGINAL_GH_ENABLED;
+  }
+
+  test("ADO session without repoMeta is rejected with 400", async () => {
+    const { POST } = await routeModulePromise;
+
+    const response = await POST(
+      createJsonRequest({
+        repoProvider: "azure_devops",
+        repoOwner: "contoso",
+        repoName: "my-repo",
+        branch: "main",
+        cloneUrl: "https://dev.azure.com/contoso/Acme/_git/my-repo",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(createCalls).toHaveLength(0);
+    restoreEnv();
+  });
+
+  test("ADO session with repoOwner mismatching configured org is rejected", async () => {
+    const { POST } = await routeModulePromise;
+
+    const response = await POST(
+      createJsonRequest({
+        repoProvider: "azure_devops",
+        repoOwner: "different-org",
+        repoName: "my-repo",
+        repoMeta: { provider: "azure_devops", project: "Acme" },
+        branch: "main",
+        cloneUrl: "https://dev.azure.com/contoso/Acme/_git/my-repo",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(createCalls).toHaveLength(0);
+    restoreEnv();
+  });
+
+  test("ADO session with full valid payload persists provider + meta", async () => {
+    const { POST } = await routeModulePromise;
+
+    const response = await POST(
+      createJsonRequest({
+        repoProvider: "azure_devops",
+        repoOwner: "contoso",
+        repoName: "my-repo",
+        repoMeta: { provider: "azure_devops", project: "Acme" },
+        branch: "main",
+        cloneUrl: "https://dev.azure.com/contoso/Acme/_git/my-repo",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(createCalls[0]).toMatchObject({
+      repoProvider: "azure_devops",
+      repoOwner: "contoso",
+      repoName: "my-repo",
+      repoMeta: { provider: "azure_devops", project: "Acme" },
+    });
+    restoreEnv();
+  });
+
+  test("github session is rejected with 403 provider_disabled when GITHUB_ENABLED=false", async () => {
+    process.env.GITHUB_ENABLED = "false";
+    const { POST } = await routeModulePromise;
+
+    const response = await POST(
+      createJsonRequest({
+        repoProvider: "github",
+        repoOwner: "vercel",
+        repoName: "open-harness",
+        branch: "main",
+        cloneUrl: "https://github.com/vercel/open-harness",
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    const body = (await response.json()) as { error: string; provider: string };
+    expect(body).toEqual({ error: "provider_disabled", provider: "github" });
+    expect(createCalls).toHaveLength(0);
+    restoreEnv();
+  });
+
+  test("ADO session is rejected with 403 when AZURE_DEVOPS_ENABLED=false", async () => {
+    process.env.AZURE_DEVOPS_ENABLED = "false";
+    const { POST } = await routeModulePromise;
+
+    const response = await POST(
+      createJsonRequest({
+        repoProvider: "azure_devops",
+        repoOwner: "contoso",
+        repoName: "my-repo",
+        repoMeta: { provider: "azure_devops", project: "Acme" },
+        branch: "main",
+        cloneUrl: "https://dev.azure.com/contoso/Acme/_git/my-repo",
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    const body = (await response.json()) as { error: string; provider: string };
+    expect(body).toEqual({
+      error: "provider_disabled",
+      provider: "azure_devops",
+    });
+    expect(createCalls).toHaveLength(0);
+    restoreEnv();
+  });
+});

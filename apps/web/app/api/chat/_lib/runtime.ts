@@ -49,8 +49,17 @@ export async function createChatRuntime(params: {
     throw new Error("Sandbox state is required to create chat runtime");
   }
 
+  // Sandbox credential brokering is GitHub-specific (network policy rewrites
+  // Authorization headers for api.github.com / github.com / etc.). For Azure
+  // DevOps sessions we skip this and rely on the authenticated remote URL
+  // injected by auto-commit-direct via `git remote set-url`.
+  const githubTokenPromise =
+    sessionRecord.repoProvider === "azure_devops"
+      ? Promise.resolve<string | null>(null)
+      : getUserGitHubToken(userId);
+
   const [githubToken, vercelCliSetup] = await Promise.all([
-    getUserGitHubToken(userId),
+    githubTokenPromise,
     getVercelCliSandboxSetup({ userId, sessionRecord }).catch((error) => {
       console.warn(
         `Failed to prepare Vercel CLI setup for session ${sessionId}:`,

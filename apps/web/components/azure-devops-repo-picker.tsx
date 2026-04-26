@@ -1,6 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface AdoProject {
   id: string;
@@ -43,23 +53,50 @@ export function AzureDevOpsRepoPicker({ onSelect }: Props) {
   const [repos, setRepos] = useState<AdoRepo[]>([]);
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(true);
+  const [isLoadingRepos, setIsLoadingRepos] = useState(false);
 
   useEffect(() => {
-    fetch("/api/azure-devops/projects")
+    const controller = new AbortController();
+    setIsLoadingProjects(true);
+    fetch("/api/azure-devops/projects", { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(r)))
       .then((data: ProjectsResponse) => {
+        if (controller.signal.aborted) return;
         setOrg(data.org);
         setProjects(data.projects);
       })
-      .catch(() => setError("Failed to load Azure DevOps projects"));
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setError("Failed to load Azure DevOps projects");
+        console.error("[ado-picker] projects fetch failed:", err);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoadingProjects(false);
+      });
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
     if (!projectId) return;
-    fetch(`/api/azure-devops/projects/${encodeURIComponent(projectId)}/repos`)
+    const controller = new AbortController();
+    setIsLoadingRepos(true);
+    fetch(`/api/azure-devops/projects/${encodeURIComponent(projectId)}/repos`, {
+      signal: controller.signal,
+    })
       .then((r) => (r.ok ? r.json() : Promise.reject(r)))
-      .then((data: ReposResponse) => setRepos(data.repos))
-      .catch(() => setError("Failed to load repositories"));
+      .then((data: ReposResponse) => {
+        if (!controller.signal.aborted) setRepos(data.repos);
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setError("Failed to load repositories");
+        console.error("[ado-picker] repos fetch failed:", err);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoadingRepos(false);
+      });
+    return () => controller.abort();
   }, [projectId]);
 
   const filteredRepos = useMemo(() => {
@@ -67,69 +104,97 @@ export function AzureDevOpsRepoPicker({ onSelect }: Props) {
     return q ? repos.filter((r) => r.name.toLowerCase().includes(q)) : repos;
   }, [filter, repos]);
 
-  if (error) return <div className="text-red-700 text-sm">{error}</div>;
+  if (error) {
+    return (
+      <div className="rounded border border-destructive/30 bg-destructive/10 p-3 text-destructive text-sm">
+        {error}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3">
       {org && (
-        <div className="text-muted-foreground text-xs">
+        <p className="text-muted-foreground text-xs">
           Organization: <span className="font-mono">{org}</span>
-        </div>
+        </p>
       )}
-      <label className="flex items-center gap-2 text-sm">
-        <span>Project</span>
-        <select
-          className="rounded border bg-background p-1"
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="ado-project">Project</Label>
+        <Select
           value={projectId ?? ""}
-          onChange={(e) => setProjectId(e.target.value || null)}
+          onValueChange={(value) => setProjectId(value || null)}
+          disabled={isLoadingProjects || projects.length === 0}
         >
-          <option value="">Select…</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-      </label>
+          <SelectTrigger id="ado-project" className="w-full">
+            <SelectValue
+              placeholder={
+                isLoadingProjects ? "Loading projects…" : "Select a project"
+              }
+            />
+          </SelectTrigger>
+          <SelectContent>
+            {projects.map((p) => (
+              <SelectItem key={p.id} value={p.id}>
+                {p.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
 
       {projectId && (
-        <>
-          <input
-            className="rounded border bg-background p-1 text-sm"
-            placeholder="Filter repos…"
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="ado-repo-filter">Repository</Label>
+          <Input
+            id="ado-repo-filter"
+            placeholder="Filter repositories…"
             type="text"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
+            disabled={isLoadingRepos}
           />
-          <ul className="max-h-64 divide-y overflow-y-auto rounded border">
-            {filteredRepos.length === 0 ? (
-              <li className="p-2 text-muted-foreground text-sm">
-                No repositories found.
-              </li>
-            ) : (
-              filteredRepos.map((r) => (
-                <li key={r.id}>
-                  <button
-                    className="w-full px-2 py-1.5 text-left text-sm hover:bg-muted"
-                    type="button"
-                    onClick={() => {
-                      if (!org) return;
-                      onSelect({
-                        org,
-                        project: r.project,
-                        repo: r.name,
-                        defaultBranch: r.defaultBranch,
-                        webUrl: r.webUrl,
-                      });
-                    }}
-                  >
-                    {r.name}
-                  </button>
+          <ScrollArea className="h-64 rounded-md border">
+            <ul className="divide-y">
+              {isLoadingRepos ? (
+                <li className="p-2 text-muted-foreground text-sm">
+                  Loading repositories…
                 </li>
-              ))
-            )}
-          </ul>
-        </>
+              ) : filteredRepos.length === 0 ? (
+                <li className="p-2 text-muted-foreground text-sm">
+                  No repositories found.
+                </li>
+              ) : (
+                filteredRepos.map((r) => (
+                  <li key={r.id}>
+                    <button
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-muted"
+                      type="button"
+                      onClick={() => {
+                        if (!org) return;
+                        onSelect({
+                          org,
+                          project: r.project,
+                          repo: r.name,
+                          defaultBranch: r.defaultBranch,
+                          webUrl: r.webUrl,
+                        });
+                      }}
+                    >
+                      <span className="font-medium">{r.name}</span>
+                      {r.defaultBranch && (
+                        <span className="ml-2 text-muted-foreground text-xs">
+                          {r.defaultBranch}
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                ))
+              )}
+            </ul>
+          </ScrollArea>
+        </div>
       )}
     </div>
   );
