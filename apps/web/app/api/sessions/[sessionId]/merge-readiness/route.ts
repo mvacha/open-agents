@@ -8,6 +8,7 @@ import {
   type PullRequestMergeMethod,
 } from "@/lib/github/client";
 import { getUserGitHubToken } from "@/lib/github/user-token";
+import { sessionToRepoRef } from "@/lib/git-providers/resolve";
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
@@ -107,7 +108,18 @@ export async function GET(_req: Request, context: RouteContext) {
   if (!sessionRecord.cloneUrl || !repoIdentifier || !sessionRecord.repoOwner) {
     return Response.json(
       buildUnavailableResponse(
-        "Session is not linked to a GitHub repository",
+        "Session is not linked to a git repository",
+        sessionRecord.prNumber,
+        repoIdentifier,
+      ) satisfies MergeReadinessResponse,
+    );
+  }
+
+  const ref = sessionToRepoRef(sessionRecord);
+  if (ref?.provider === "azure_devops") {
+    return Response.json(
+      buildUnavailableResponse(
+        "Merging Azure DevOps pull requests from this app is not supported. Merge in Azure DevOps directly.",
         sessionRecord.prNumber,
         repoIdentifier,
       ) satisfies MergeReadinessResponse,
