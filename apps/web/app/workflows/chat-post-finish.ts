@@ -397,14 +397,43 @@ export async function runAutoCommitStep(params: {
   try {
     const { connectSandbox } = await import("@open-harness/sandbox");
     const { performAutoCommit } = await import("@/lib/chat/auto-commit-direct");
+    const { getSessionById } = await import("@/lib/db/sessions");
+    const { getProviderForSession, sessionToRepoRef } =
+      await import("@/lib/git-providers/resolve");
+
+    const session = await getSessionById(params.sessionId);
+    if (!session) {
+      console.warn(
+        `[workflow] Auto-commit skipped: session ${params.sessionId} not found`,
+      );
+      return {
+        committed: false,
+        pushed: false,
+        error: "Session not found",
+      };
+    }
+
+    const provider = getProviderForSession(session);
+    const ref = sessionToRepoRef(session);
+    if (!ref) {
+      console.warn(
+        `[workflow] Auto-commit skipped: session ${params.sessionId} missing repo identifiers`,
+      );
+      return {
+        committed: false,
+        pushed: false,
+        error: "Session is missing repository identifiers",
+      };
+    }
+
     const sandbox = await connectSandbox(params.sandboxState);
     return await performAutoCommit({
       sandbox,
       userId: params.userId,
       sessionId: params.sessionId,
       sessionTitle: params.sessionTitle,
-      repoOwner: params.repoOwner,
-      repoName: params.repoName,
+      provider,
+      ref,
     });
   } catch (error) {
     console.error("[workflow] Auto-commit failed:", error);

@@ -433,8 +433,12 @@ describe("runAutoCommitStep", () => {
         userId: "user-1",
         sessionId: "session-1",
         sessionTitle: "My session",
-        repoOwner: "acme",
-        repoName: "repo",
+        provider: expect.objectContaining({ id: "github" }),
+        ref: expect.objectContaining({
+          provider: "github",
+          owner: "acme",
+          repo: "repo",
+        }),
       }),
     );
   });
