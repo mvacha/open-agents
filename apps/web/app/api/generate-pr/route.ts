@@ -15,9 +15,12 @@ import {
 } from "@/app/api/generate-pr/_lib/generate-pr-helpers";
 import { getGitHubAccount } from "@/lib/db/accounts";
 import { getSessionById, updateSession } from "@/lib/db/sessions";
-import { buildGitHubAuthRemoteUrl } from "@/lib/github/repo-identifiers";
+import { getUserById } from "@/lib/db/users";
+import {
+  getProviderForSession,
+  sessionToRepoRef,
+} from "@/lib/git-providers/resolve";
 import { generatePullRequestContentFromSandbox } from "@/lib/git/pr-content";
-import { getUserGitHubToken } from "@/lib/github/user-token";
 import { getAppCoAuthorTrailer } from "@/lib/github/app-auth";
 import { isSandboxActive } from "@/lib/sandbox/utils";
 import { getServerSession } from "@/lib/session/get-server-session";
@@ -106,21 +109,26 @@ export async function POST(req: Request) {
   const sandbox = await connectSandbox(sessionRecord.sandboxState);
   const cwd = sandbox.workingDirectory;
   let userToken: string | null = null;
+  const provider = getProviderForSession(sessionRecord);
+  const ref = sessionToRepoRef(sessionRecord);
 
   if (sessionRecord.repoOwner && sessionRecord.repoName) {
-    userToken = await getUserGitHubToken(session.user.id);
+    if (!ref) {
+      return Response.json(
+        { error: "Invalid repository configuration" },
+        { status: 400 },
+      );
+    }
+
+    userToken = await provider.getCloneToken(session.user.id);
     if (!userToken) {
       return Response.json(
-        { error: "No GitHub token available for this repository" },
+        { error: "No git provider token available for this repository" },
         { status: 403 },
       );
     }
 
-    const authUrl = buildGitHubAuthRemoteUrl({
-      token: userToken,
-      owner: sessionRecord.repoOwner,
-      repo: sessionRecord.repoName,
-    });
+    const authUrl = provider.buildAuthRemoteUrl({ token: userToken, ref });
     if (!authUrl) {
       return Response.json(
         { error: "Invalid repository configuration" },
@@ -346,15 +354,32 @@ Respond with ONLY the commit message, nothing else.`,
     // Set the git author identity to the authenticated user so the commit is
     // attributed to them. A Co-Authored-By trailer is appended for the GitHub
     // App bot so the agent's involvement is visible in the commit history.
-    const githubAccount = await getGitHubAccount(session.user.id);
-    if (githubAccount?.externalUserId && githubAccount.username) {
-      const userEmail = `${githubAccount.externalUserId}+${githubAccount.username}@users.noreply.github.com`;
-      await sandbox.exec(
-        `git config user.name '${githubAccount.username.replace(/'/g, "'\\''")}'`,
-        cwd,
-        5000,
-      );
-      await sandbox.exec(`git config user.email '${userEmail}'`, cwd, 5000);
+    if (ref?.provider === "github") {
+      const githubAccount = await getGitHubAccount(session.user.id);
+      if (githubAccount?.externalUserId && githubAccount.username) {
+        const userEmail = `${githubAccount.externalUserId}+${githubAccount.username}@users.noreply.github.com`;
+        await sandbox.exec(
+          `git config user.name '${githubAccount.username.replace(/'/g, "'\\''")}'`,
+          cwd,
+          5000,
+        );
+        await sandbox.exec(`git config user.email '${userEmail}'`, cwd, 5000);
+      }
+    } else if (ref?.provider === "azure_devops") {
+      const user = await getUserById(session.user.id);
+      if (user?.username) {
+        const displayName = (user.name?.trim() || user.username).replace(
+          /'/g,
+          "'\\''",
+        );
+        const email = (
+          user.email?.trim()
+            ? user.email
+            : `${user.username}@users.noreply.invalid`
+        ).replace(/'/g, "'\\''");
+        await sandbox.exec(`git config user.name '${displayName}'`, cwd, 5000);
+        await sandbox.exec(`git config user.email '${email}'`, cwd, 5000);
+      }
     }
 
     const escapedMessage = commitMessage.replace(/'/g, "'\\''");
@@ -466,7 +491,8 @@ Respond with ONLY the commit message, nothing else.`,
         !gitActions.pushed &&
         isPermissionError &&
         sessionRecord.repoOwner &&
-        sessionRecord.repoName
+        sessionRecord.repoName &&
+        ref?.provider === "github"
       ) {
         const githubAccount = await getGitHubAccount(session.user.id);
 
