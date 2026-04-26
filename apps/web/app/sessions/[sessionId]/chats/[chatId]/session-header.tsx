@@ -17,6 +17,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
+import { buildRepoWebUrl } from "@/lib/git-providers/url-builders";
 import { cn } from "@/lib/utils";
 import { useGitPanel } from "./git-panel-context";
 import { useSessionLayout } from "@/app/sessions/[sessionId]/session-layout-context";
@@ -145,10 +146,10 @@ export function SessionHeader() {
           <div className="flex min-w-0 items-center gap-1.5 text-sm">
             {session.repoName && (
               <div className="hidden min-w-0 items-center gap-1.5 sm:flex">
-                {session.cloneUrl ? (
+                {session.cloneUrl && buildRepoWebUrl(session) ? (
                   /* oxlint-disable-next-line nextjs/no-html-link-for-pages */
                   <a
-                    href={`https://github.com/${session.repoOwner}/${session.repoName}`}
+                    href={buildRepoWebUrl(session) ?? "#"}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1 truncate font-medium text-foreground hover:underline"

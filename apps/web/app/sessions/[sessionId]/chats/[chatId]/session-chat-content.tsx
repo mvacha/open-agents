@@ -110,6 +110,7 @@ import {
   shouldRenderGitDataPart,
   shouldShowThinkingIndicator,
 } from "@/lib/chat-streaming-state";
+import { buildPullRequestUrl } from "@/lib/git-providers/url-builders";
 import { ACCEPT_IMAGE_TYPES, isValidImageType } from "@/lib/image-utils";
 import { isLargeText } from "@/lib/text-attachment-utils";
 import {
@@ -2856,8 +2857,8 @@ export function SessionChatContent({
     session.vercelProjectId && previewLookupBranch,
   );
   const existingPrUrl =
-    hasExistingPr && session.repoOwner && session.repoName
-      ? `https://github.com/${session.repoOwner}/${session.repoName}/pull/${session.prNumber}`
+    hasExistingPr && session.prNumber
+      ? buildPullRequestUrl(session, session.prNumber)
       : null;
   const prDeploymentQuery = new URLSearchParams(
     Object.entries({

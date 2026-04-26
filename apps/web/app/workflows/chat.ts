@@ -32,6 +32,7 @@ import {
   runAutoCreatePrStep,
 } from "./chat-post-finish";
 import { dedupeMessageReasoning } from "@/lib/chat/dedupe-message-reasoning";
+import { buildCommitUrl } from "@/lib/git-providers/url-builders";
 import type {
   WorkflowRunStatus,
   WorkflowRunStepTiming,
@@ -52,10 +53,14 @@ type Options = {
   autoCreatePrEnabled?: boolean;
   /** Session title for commit message generation. */
   sessionTitle?: string;
-  /** GitHub repo owner (required for auto-commit and diff refresh). */
+  /** Repo owner (GitHub) or organization (Azure DevOps) — required for auto-commit and diff refresh. */
   repoOwner?: string;
-  /** GitHub repo name (required for auto-commit). */
+  /** Repo name — required for auto-commit. */
   repoName?: string;
+  /** Provider id discriminator. Defaults to "github" when omitted. */
+  repoProvider?: "github" | "azure_devops";
+  /** Provider-specific metadata; for ADO must contain { provider: "azure_devops", project }. */
+  repoMeta?: unknown;
 };
 
 type Writable = WritableStream<UIMessageChunk>;
@@ -311,19 +316,20 @@ function stringifyDebugPayload(value: unknown): string {
   );
 }
 
-function buildGitHubCommitUrl(
-  repoOwner: string,
-  repoName: string,
-  commitSha: string,
-): string {
-  return `https://github.com/${encodeURIComponent(repoOwner)}/${encodeURIComponent(repoName)}/commit/${encodeURIComponent(commitSha)}`;
-}
-
 function buildCommitData(
   result: Awaited<ReturnType<typeof runAutoCommitStep>>,
-  repoOwner: string,
-  repoName: string,
+  sessionFields: {
+    repoOwner: string;
+    repoName: string;
+    repoProvider?: "github" | "azure_devops";
+    repoMeta?: unknown;
+  },
 ): WebAgentCommitData {
+  const commitUrl =
+    result.pushed && result.commitSha
+      ? (buildCommitUrl(sessionFields, result.commitSha) ?? undefined)
+      : undefined;
+
   if (result.error) {
     return {
       status: "error",
@@ -331,10 +337,7 @@ function buildCommitData(
       pushed: result.pushed,
       commitMessage: result.commitMessage,
       commitSha: result.commitSha,
-      url:
-        result.pushed && result.commitSha
-          ? buildGitHubCommitUrl(repoOwner, repoName, result.commitSha)
-          : undefined,
+      url: commitUrl,
       error: result.error,
     };
   }
@@ -346,10 +349,7 @@ function buildCommitData(
       pushed: result.pushed,
       commitMessage: result.commitMessage,
       commitSha: result.commitSha,
-      url:
-        result.pushed && result.commitSha
-          ? buildGitHubCommitUrl(repoOwner, repoName, result.commitSha)
-          : undefined,
+      url: commitUrl,
     };
   }
 
@@ -646,7 +646,12 @@ export async function runAgentWorkflow(options: Options) {
         const resolvedCommitPart = {
           type: "data-commit" as const,
           id: commitPartId,
-          data: buildCommitData(autoCommitResult, repoOwner, repoName),
+          data: buildCommitData(autoCommitResult, {
+            repoOwner,
+            repoName,
+            repoProvider: options.repoProvider,
+            repoMeta: options.repoMeta,
+          }),
         };
         pendingAssistantResponse = upsertAssistantDataPart(
           pendingAssistantResponse,

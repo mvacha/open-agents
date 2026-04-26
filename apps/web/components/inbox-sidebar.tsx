@@ -47,6 +47,10 @@ import { useSession } from "@/hooks/use-session";
 import type { SessionWithUnread } from "@/hooks/use-sessions";
 import type { Session as AuthSession } from "@/lib/session/types";
 import { formatRelativeTime } from "@/lib/format-relative-time";
+import {
+  buildBranchUrl,
+  buildPullRequestUrl,
+} from "@/lib/git-providers/url-builders";
 import { getUsageLeaderboardDomain } from "@/lib/usage/leaderboard-domain";
 
 type InboxSidebarProps = {
@@ -197,7 +201,7 @@ function getSessionStatusLabel(session: SessionWithUnread): {
 }
 
 function getSessionBranchUrl(session: SessionWithUnread): string | null {
-  // Only link if the branch is known to exist on GitHub (has a PR).
+  // Only link if the branch is known to exist on the remote (has a PR).
   // Local-only branches that haven't been pushed would 404.
   if (
     !session.branch ||
@@ -206,12 +210,12 @@ function getSessionBranchUrl(session: SessionWithUnread): string | null {
     !session.prNumber
   )
     return null;
-  return `https://github.com/${session.repoOwner}/${session.repoName}/tree/${session.branch}`;
+  return buildBranchUrl(session, session.branch);
 }
 
 function getSessionPrUrl(session: SessionWithUnread): string | null {
-  if (!session.prNumber || !session.repoOwner || !session.repoName) return null;
-  return `https://github.com/${session.repoOwner}/${session.repoName}/pull/${session.prNumber}`;
+  if (!session.prNumber) return null;
+  return buildPullRequestUrl(session, session.prNumber);
 }
 
 function SessionPopoverContent({ session }: { session: SessionWithUnread }) {
