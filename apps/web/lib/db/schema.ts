@@ -1,4 +1,5 @@
 import type { SandboxState } from "@open-harness/sandbox";
+import type { RepoMeta } from "@/lib/git-providers/types";
 import type { ModelVariant } from "@/lib/model-variants";
 import type { GlobalSkillRef } from "@/lib/skills/global-skill-refs";
 import {
@@ -141,6 +142,12 @@ export const sessions = pgTable(
     repoName: text("repo_name"),
     branch: text("branch"),
     cloneUrl: text("clone_url"),
+    repoProvider: text("repo_provider", {
+      enum: ["github", "azure_devops"],
+    })
+      .notNull()
+      .default("github"),
+    repoMeta: jsonb("repo_meta").$type<RepoMeta | null>(),
     vercelProjectId: text("vercel_project_id"),
     vercelProjectName: text("vercel_project_name"),
     vercelTeamId: text("vercel_team_id"),
