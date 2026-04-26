@@ -50,6 +50,24 @@ const spies = {
   performAutoCreatePr: mock(() =>
     Promise.resolve({ created: true, syncedExisting: false, skipped: false }),
   ),
+  getSessionById: mock(() =>
+    Promise.resolve({
+      id: "session-1",
+      repoOwner: "acme",
+      repoName: "repo",
+      repoProvider: "github" as const,
+      repoMeta: null,
+    } as never),
+  ),
+  getProviderForSession: mock(() => ({ id: "github" }) as never),
+  sessionToRepoRef: mock(
+    () =>
+      ({
+        provider: "github",
+        owner: "acme",
+        repo: "repo",
+      }) as never,
+  ),
 };
 
 // ── Module mocks (must appear before the module-under-test import) ──
@@ -63,6 +81,12 @@ mock.module("@/lib/db/sessions", () => ({
   updateChatAssistantActivity: spies.updateChatAssistantActivity,
   updateSession: spies.updateSession,
   upsertChatMessageScoped: spies.upsertChatMessageScoped,
+  getSessionById: spies.getSessionById,
+}));
+
+mock.module("@/lib/git-providers/resolve", () => ({
+  getProviderForSession: spies.getProviderForSession,
+  sessionToRepoRef: spies.sessionToRepoRef,
 }));
 
 mock.module("@/lib/db/usage", () => ({
@@ -449,8 +473,12 @@ describe("runAutoCreatePrStep", () => {
         userId: "user-1",
         sessionId: "session-1",
         sessionTitle: "My session",
-        repoOwner: "acme",
-        repoName: "repo",
+        provider: expect.objectContaining({ id: "github" }),
+        ref: expect.objectContaining({
+          provider: "github",
+          owner: "acme",
+          repo: "repo",
+        }),
       }),
     );
   });

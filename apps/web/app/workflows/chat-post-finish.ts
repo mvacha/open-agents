@@ -428,14 +428,45 @@ export async function runAutoCreatePrStep(params: {
   try {
     const { connectSandbox } = await import("@open-harness/sandbox");
     const { performAutoCreatePr } = await import("@/lib/chat/auto-pr-direct");
+    const { getSessionById } = await import("@/lib/db/sessions");
+    const { getProviderForSession, sessionToRepoRef } =
+      await import("@/lib/git-providers/resolve");
+
+    const session = await getSessionById(params.sessionId);
+    if (!session) {
+      console.warn(
+        `[workflow] Auto-PR skipped: session ${params.sessionId} not found`,
+      );
+      return {
+        created: false,
+        syncedExisting: false,
+        skipped: true,
+        skipReason: "Session not found",
+      };
+    }
+
+    const provider = getProviderForSession(session);
+    const ref = sessionToRepoRef(session);
+    if (!ref) {
+      console.warn(
+        `[workflow] Auto-PR skipped: session ${params.sessionId} missing repo identifiers`,
+      );
+      return {
+        created: false,
+        syncedExisting: false,
+        skipped: true,
+        skipReason: "Session is missing repository identifiers",
+      };
+    }
+
     const sandbox = await connectSandbox(params.sandboxState);
     const result = await performAutoCreatePr({
       sandbox,
       userId: params.userId,
       sessionId: params.sessionId,
       sessionTitle: params.sessionTitle,
-      repoOwner: params.repoOwner,
-      repoName: params.repoName,
+      provider,
+      ref,
     });
 
     if (result.error) {
