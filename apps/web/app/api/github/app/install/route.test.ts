@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { NextRequest } from "next/server";
 
+mock.module("server-only", () => ({}));
+
 let authSession: { user: { id: string } } | null;
 let githubAccount: { externalUserId: string } | null;
 let installations: Array<{ installationId: number }>;
