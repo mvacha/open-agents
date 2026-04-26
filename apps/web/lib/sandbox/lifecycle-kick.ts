@@ -129,5 +129,10 @@ export function kickSandboxLifecycleWorkflow(input: KickSandboxLifecycleInput) {
     return;
   }
 
-  void run();
+  run().catch((error) => {
+    console.error(
+      `[kickSandboxLifecycleWorkflow] background run failed (sessionId=${input.sessionId}, reason=${input.reason}):`,
+      error,
+    );
+  });
 }

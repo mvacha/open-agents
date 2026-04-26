@@ -12,11 +12,6 @@
         "stepId": "step//./app/workflows/sandbox-lifecycle//runLifecycleEvaluation"
       }
     },
-    "node_modules/workflow/dist/stdlib.js": {
-      "fetch": {
-        "stepId": "step//workflow@4.2.0-beta.74//fetch"
-      }
-    },
     "node_modules/workflow/dist/internal/builtins.js": {
       "__builtin_response_array_buffer": {
         "stepId": "__builtin_response_array_buffer"
@@ -26,6 +21,34 @@
       },
       "__builtin_response_text": {
         "stepId": "__builtin_response_text"
+      }
+    },
+    "app/workflows/chat.ts": {
+      "closeStream": {
+        "stepId": "step//./app/workflows/chat//closeStream"
+      },
+      "convertMessages": {
+        "stepId": "step//./app/workflows/chat//convertMessages"
+      },
+      "generateId": {
+        "stepId": "step//./app/workflows/chat//generateId"
+      },
+      "runAgentStep": {
+        "stepId": "step//./app/workflows/chat//runAgentStep"
+      },
+      "sendDataPart": {
+        "stepId": "step//./app/workflows/chat//sendDataPart"
+      },
+      "sendFinish": {
+        "stepId": "step//./app/workflows/chat//sendFinish"
+      },
+      "sendStart": {
+        "stepId": "step//./app/workflows/chat//sendStart"
+      }
+    },
+    "node_modules/workflow/dist/stdlib.js": {
+      "fetch": {
+        "stepId": "step//workflow@4.2.0-beta.74//fetch"
       }
     },
     "app/workflows/chat-post-finish.ts": {
@@ -58,29 +81,6 @@
       },
       "runAutoCreatePrStep": {
         "stepId": "step//./app/workflows/chat-post-finish//runAutoCreatePrStep"
-      }
-    },
-    "app/workflows/chat.ts": {
-      "closeStream": {
-        "stepId": "step//./app/workflows/chat//closeStream"
-      },
-      "convertMessages": {
-        "stepId": "step//./app/workflows/chat//convertMessages"
-      },
-      "generateId": {
-        "stepId": "step//./app/workflows/chat//generateId"
-      },
-      "runAgentStep": {
-        "stepId": "step//./app/workflows/chat//runAgentStep"
-      },
-      "sendDataPart": {
-        "stepId": "step//./app/workflows/chat//sendDataPart"
-      },
-      "sendFinish": {
-        "stepId": "step//./app/workflows/chat//sendFinish"
-      },
-      "sendStart": {
-        "stepId": "step//./app/workflows/chat//sendStart"
       }
     }
   },
