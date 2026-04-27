@@ -121,16 +121,15 @@ The pre-fetched config is *not* persisted or reused at dev-server-launch time. T
      ──no──→ 409 "Sandbox ports out of sync. Reset the sandbox to apply."
    (For sandboxes created before this change, `sandboxState.ports` is undefined and we treat it as `DEFAULT_SANDBOX_PORTS`.)
 4. Run setup (§ 5.5).
-5. For each dev[] entry, in parallel:
+5. For each dev[] entry, **sequentially in declaration order**:
      a. If .open-agents/.pids/<name>.pid exists and `kill -0 $pid` succeeds, skip.
      b. Otherwise build launch command:
           printf '%s' "$$" > .open-agents/.pids/<name>.pid && exec bash -c "<run>"
         run via sandbox.execDetached at <workingDirectory>/<cwd>.
-   Wait via Promise.allSettled for all launch handshakes (each ≤ 1.5s).
-6. If any launch failed:
-     SIGTERM all sibling processes that did launch in this batch, remove their pidfiles.
-     Return 500 with { error, failed: { name, exitCode, stderr } }.
-7. Otherwise return 200 with { processes: [...] }.
+     c. If the launch handshake fails (1.5s probe), immediately stop iteration,
+        SIGTERM every sibling launched earlier in this batch, remove their
+        pidfiles, and return 500 with { error, failed: { name, exitCode, stderr } }.
+6. After all entries have launched, return 200 with { processes: [...] }.
 ```
 
 ### 5.4 Heuristic-path launch sequence (unchanged)
@@ -205,10 +204,12 @@ Returns the file contents as a UTF-8 string, or `null` if the file doesn't exist
   "mode": "declared",
   "processes": [
     { "name": "web", "cwd": "apps/web", "port": 5173, "url": "https://...-5173..." },
-    { "name": "api", "cwd": "apps/api", "port": 3001, "url": "https://...-3001..." }
+    { "name": "api", "cwd": "apps/api", "port": 3001 }
   ]
 }
 ```
+
+Only the **first** process in declaration order receives a `url` field — that is the primary, user-facing dev server (rendered in the preview iframe). Subsequent processes (APIs, queues, workers) are launched and their port/cwd are reported, but no `url` is emitted because they are not the surfaced preview. If a project needs every process to be reachable externally, the user should declare them in port order and rely on `sandbox.domain(port)` directly; the convention here is "first process = preview".
 
 ### 7.2 Declared path, atomic launch failure
 
@@ -247,7 +248,7 @@ The `mode` discriminator is added to both shapes to let the client narrow safely
 The hook in `apps/web/app/sessions/[sessionId]/chats/[chatId]/hooks/use-dev-server.ts` learns the new shape and narrows on `mode`:
 
 - `mode: "heuristic"` → behaves as today.
-- `mode: "declared"` → render the first started process URL in the existing single-server slot. A multi-process panel is out of scope for this spec; named processes show up there in a follow-up.
+- `mode: "declared"` → render `processes[0].url` in the existing single-server slot. The remaining processes are running in the background but are not surfaced in this spec; a multi-process panel is a follow-up.
 
 ## 9. Errors & instrumentation
 
@@ -266,8 +267,8 @@ The hook in `apps/web/app/sessions/[sessionId]/chats/[chatId]/hooks/use-dev-serv
 - Azure DevOps: 200 plain body, 404 → null, non-200/404 → throw.
 
 ### 10.3 Route integration tests
-- **Declared path, success:** 1 process, N processes; assert pidfiles created; assert response shape.
-- **Declared path, atomic failure:** mock one `execDetached` to fail; assert siblings SIGTERM'd; assert pidfiles cleaned; assert 500 body.
+- **Declared path, success:** 1 process, N processes; assert sequential launch order; assert only `processes[0]` has `url`; assert pidfiles created; assert response shape.
+- **Declared path, atomic failure:** mock the second `execDetached` to fail; assert the first sibling was SIGTERM'd; assert the third process was never launched; assert pidfiles cleaned; assert 500 body.
 - **Declared path, invalid config:** 422 with Zod messages.
 - **Declared path, ports out of sync:** 409.
 - **Heuristic fallback:** config absent; existing tests must keep passing.
