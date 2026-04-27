@@ -1,6 +1,12 @@
 import { checkBotId } from "botid/server";
 import { botIdConfig } from "@/lib/botid";
-import { connectSandbox, type SandboxState } from "@open-harness/sandbox";
+import {
+  type ConnectOptions,
+  // eslint-disable-next-line no-restricted-imports -- creation path; the wrapper is used below when a sessionId is available.
+  connectSandbox,
+  type Sandbox,
+  type SandboxState,
+} from "@open-harness/sandbox";
 import {
   requireAuthenticatedUser,
   requireOwnedSession,
@@ -8,8 +14,17 @@ import {
 } from "@/app/api/sessions/_lib/session-context";
 import { getGitHubAccount } from "@/lib/db/accounts";
 import { updateSession } from "@/lib/db/sessions";
+import {
+  getProviderForSession,
+  sessionToRepoRef,
+} from "@/lib/git-providers/resolve";
 import { parseGitHubUrl } from "@/lib/github/client";
 import { getUserGitHubToken } from "@/lib/github/user-token";
+import {
+  envFromConfig,
+  fetchOpenAgentsConfigFromProvider,
+  uniquePortsFromConfig,
+} from "@/lib/open-agents-config/fetch";
 import {
   DEFAULT_SANDBOX_BASE_SNAPSHOT_ID,
   DEFAULT_SANDBOX_PORTS,
@@ -20,6 +35,7 @@ import {
   getNextLifecycleVersion,
 } from "@/lib/sandbox/lifecycle";
 import { kickSandboxLifecycleWorkflow } from "@/lib/sandbox/lifecycle-kick";
+import { connectSandboxForSession } from "@/lib/sandbox/connect";
 import {
   getVercelCliSandboxSetup,
   syncVercelCliAuthToSandbox,
@@ -46,7 +62,7 @@ interface CreateSandboxRequest {
 // async function syncVercelProjectEnvVarsToSandbox(params: {
 //   userId: string;
 //   sessionRecord: SessionRecord;
-//   sandbox: Awaited<ReturnType<typeof connectSandbox>>;
+//   sandbox: Sandbox;
 // }): Promise<void> {
 //   if (!params.sessionRecord.vercelProjectId) {
 //     return;
@@ -76,7 +92,7 @@ interface CreateSandboxRequest {
 async function syncVercelCliAuthForSandbox(params: {
   userId: string;
   sessionRecord: SessionRecord;
-  sandbox: Awaited<ReturnType<typeof connectSandbox>>;
+  sandbox: Sandbox;
 }): Promise<void> {
   const setup = await getVercelCliSandboxSetup({
     userId: params.userId,
@@ -89,9 +105,84 @@ async function syncVercelCliAuthForSandbox(params: {
   });
 }
 
+interface ResolvedSandboxConfig {
+  ports: number[];
+  env?: Record<string, string>;
+  configWarning?: { kind: "invalid" | "error"; error: string };
+}
+
+async function resolveSandboxConfig(params: {
+  sessionRecord: SessionRecord | undefined;
+  branch: string;
+  userId: string;
+}): Promise<ResolvedSandboxConfig> {
+  const { sessionRecord, branch } = params;
+  if (!sessionRecord) {
+    return { ports: DEFAULT_SANDBOX_PORTS };
+  }
+
+  const ref = sessionToRepoRef({
+    repoOwner: sessionRecord.repoOwner,
+    repoName: sessionRecord.repoName,
+    repoProvider: sessionRecord.repoProvider,
+    repoMeta: sessionRecord.repoMeta,
+  });
+  if (!ref) {
+    return { ports: DEFAULT_SANDBOX_PORTS };
+  }
+
+  const provider = getProviderForSession({
+    repoOwner: sessionRecord.repoOwner,
+    repoName: sessionRecord.repoName,
+    repoProvider: sessionRecord.repoProvider,
+    repoMeta: sessionRecord.repoMeta,
+  });
+
+  const token = await provider.getCloneToken(params.userId);
+  if (!token) {
+    return { ports: DEFAULT_SANDBOX_PORTS };
+  }
+
+  const result = await fetchOpenAgentsConfigFromProvider({
+    provider,
+    ref,
+    branch,
+    token,
+  });
+
+  if (result.kind === "ok") {
+    return {
+      ports: uniquePortsFromConfig(result.config),
+      env: envFromConfig(result.config),
+    };
+  }
+
+  if (result.kind === "invalid") {
+    console.warn(
+      `[sandbox] .open-agents/config.json is invalid; falling back to default ports: ${result.error}`,
+    );
+    return {
+      ports: DEFAULT_SANDBOX_PORTS,
+      configWarning: { kind: "invalid", error: result.error },
+    };
+  }
+
+  if (result.kind === "error") {
+    console.warn(
+      `[sandbox] failed to pre-fetch .open-agents/config.json; falling back to default ports: ${result.error}`,
+    );
+    return {
+      ports: DEFAULT_SANDBOX_PORTS,
+      configWarning: { kind: "error", error: result.error },
+    };
+  }
+
+  return { ports: DEFAULT_SANDBOX_PORTS };
+}
+
 async function installSessionGlobalSkills(params: {
   sessionRecord: SessionRecord;
-  sandbox: Awaited<ReturnType<typeof connectSandbox>>;
+  sandbox: Sandbox;
 }): Promise<void> {
   const globalSkillRefs = params.sessionRecord.globalSkillRefs ?? [];
   if (globalSkillRefs.length === 0) {
@@ -190,23 +281,32 @@ export async function POST(req: Request) {
       }
     : undefined;
 
-  const sandbox = await connectSandbox({
-    state: {
-      type: "vercel",
-      ...(sandboxName ? { sandboxName } : {}),
-      source,
-    },
-    options: {
-      githubToken: githubToken ?? undefined,
-      gitUser,
-      timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
-      ports: DEFAULT_SANDBOX_PORTS,
-      baseSnapshotId: DEFAULT_SANDBOX_BASE_SNAPSHOT_ID,
-      persistent: !!sandboxName,
-      resume: !!sandboxName,
-      createIfMissing: !!sandboxName,
-    },
+  const { ports, env, configWarning } = await resolveSandboxConfig({
+    sessionRecord,
+    branch,
+    userId: session.user.id,
   });
+
+  const state: SandboxState = {
+    type: "vercel",
+    ...(sandboxName ? { sandboxName } : {}),
+    source,
+  };
+  const connectOptions: ConnectOptions = {
+    githubToken: githubToken ?? undefined,
+    gitUser,
+    timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
+    ports,
+    ...(env ? { env } : {}),
+    baseSnapshotId: DEFAULT_SANDBOX_BASE_SNAPSHOT_ID,
+    persistent: !!sandboxName,
+    resume: !!sandboxName,
+    createIfMissing: !!sandboxName,
+  };
+
+  const sandbox = sessionId
+    ? await connectSandboxForSession(state, sessionId, connectOptions)
+    : await connectSandbox(state, connectOptions);
 
   if (sessionId && sandbox.getState) {
     const nextState = sandbox.getState() as SandboxState;
@@ -275,6 +375,7 @@ export async function POST(req: Request) {
     currentBranch: repoUrl ? branch : undefined,
     mode: "vercel",
     timing: { readyMs },
+    ...(configWarning ? { configWarning } : {}),
   });
 }
 
@@ -318,7 +419,10 @@ export async function DELETE(req: Request) {
   }
 
   // Connect and stop using unified API
-  const sandbox = await connectSandbox(sessionRecord.sandboxState);
+  const sandbox = await connectSandboxForSession(
+    sessionRecord.sandboxState,
+    sessionId,
+  );
   await sandbox.stop();
 
   const clearedState = clearSandboxState(sessionRecord.sandboxState);

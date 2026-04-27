@@ -1,6 +1,6 @@
 # `.open-agents/config.json` — project-declared sandbox setup & dev processes
 
-**Status:** Draft
+**Status:** Implemented (with deltas — see § 13)
 **Date:** 2026-04-27
 **Owner:** Michal Vácha
 
@@ -303,5 +303,112 @@ apps/web/app/api/sessions/[sessionId]/dev-server/route.test.ts
                                                       (extend)
 apps/web/app/sessions/[sessionId]/chats/[chatId]/hooks/use-dev-server.ts
                                                       (mode discriminator)
++ tests for each new module
+```
+
+## 13. Implementation deltas (post-draft)
+
+The spec above was written before implementation. The shipped feature follows the
+same shape; this section records intentional divergences and bundled cleanups so
+future readers don't have to reconstruct them from git history.
+
+### 13.1 Sequential launch + primary-only URL (§ 5.3, § 7.1)
+
+The original draft hand-waved on whether multi-process launches were parallel.
+The shipped behavior is **strictly sequential** in declaration order, with
+**immediate rollback** on the first failing process — no `Promise.allSettled`,
+no half-started state. The first process in declaration order is the *only* one
+that gets a `url` field; siblings are launched as background services and
+their `url` is omitted (the first process is the surfaced preview).
+
+### 13.2 `setup` hash now also covers `env` (§ 5.5)
+
+`computeSetupHash(setup)` became `computeSetupHash({ setup, env })`. Without
+this, edits to `config.env` between launches would leave the previous
+`.setup-done` marker in place and skip setup, even though the environment
+visible to setup commands had changed. Encoded as a stable JSON over both
+fields so cosmetic edits remain idempotent.
+
+### 13.3 `connectSandboxForSession` wrapper (new, not in § 12)
+
+Bundled with this work because the declared path needs the sandbox-logs panel
+(see § 13.4) and that requires every session-scoped sandbox connection to
+wire the `onLog` hook. Lives at `apps/web/lib/sandbox/connect.ts`. All
+callers under `apps/web/app/**` and `apps/web/lib/sandbox/**` use the wrapper;
+the only legitimate direct callers of `connectSandbox` are the wrapper itself
+and the no-session fallback in `chat-post-finish.ts`. Enforced via
+`no-restricted-imports` in `.oxlintrc.json` (overrides for `apps/web/**`).
+
+### 13.4 Sandbox-logs panel & supporting routes (new, not in § 12)
+
+The declared-path UX needs a way to see setup output and per-process command
+logs. Implementation:
+
+- `apps/web/lib/sandbox/log-buffer.ts` — in-memory per-session ring buffer
+  (cap 2000 entries) plus listener fan-out, persisted on `globalThis` to
+  survive Next.js HMR.
+- `apps/web/app/api/sessions/[sessionId]/sandbox-logs/stream/route.ts` —
+  SSE stream of buffer snapshot + live entries.
+- `apps/web/app/api/sessions/[sessionId]/sandbox-logs/route.ts` — DELETE to
+  clear the buffer.
+- `apps/web/app/api/sessions/[sessionId]/sandbox-exec/route.ts` — POST a
+  short-lived bash command for ad-hoc terminal use; output flows back through
+  the same log buffer.
+- `apps/web/app/sessions/[sessionId]/chats/[chatId]/sandbox-logs-panel.tsx` —
+  the UI surface (filter / agent vs git toggle / run command / clear).
+
+The agent itself wires `onLog` with `source: "agent"` so panel filters can
+distinguish agent commands from infra ones.
+
+### 13.5 `command-logger.ts` removed; sandbox calls `onLog` directly
+
+The original draft (§ 9) referenced a separate `packages/sandbox/vercel/command-logger.ts`
+helper. It was removed during cleanup: each `VercelSandbox.exec` /
+`execDetached` site now invokes `this.hooks?.onLog?.(...)` inline. Hook
+implementations are documented as "must not throw" — exec calls them
+synchronously without wrapping.
+
+### 13.6 Sandbox-creation surfaces config errors
+
+When `.open-agents/config.json` parses but fails Zod validation (or the git
+provider returns a transport error), sandbox creation falls back to default
+ports as in § 5.2 *and* now returns `configWarning: { kind, error }` in the
+response body so the UI can prompt the user to fix the config rather than
+silently arriving at a sandbox that the dev-server route will reject with 422.
+
+### 13.7 `stopDeclaredProcesses` uses `sandbox.readdir`
+
+Original draft (§ 5.6) implied `glob .open-agents/.pids/*.pid`. Shipped
+implementation uses `sandbox.readdir(.pids, { withFileTypes: true })` —
+no extra `ls` round-trip, returns gracefully on a missing directory.
+
+### 13.8 Files actually touched
+
+```
+apps/web/lib/git-providers/types.ts                   (+fetchRepoFile)
+apps/web/lib/git-providers/github-provider.ts         (+fetchRepoFile)
+apps/web/lib/git-providers/azure-devops-provider.ts   (+fetchRepoFile)
+apps/web/lib/azure-devops/fetch-repo-file.ts          (NEW)
+apps/web/lib/github/api.ts                            (+fetchGitHubRepoFile)
+apps/web/lib/open-agents-config/schema.ts             (NEW)
+apps/web/lib/open-agents-config/fetch.ts              (NEW)
+apps/web/lib/open-agents-config/sandbox-config.ts     (NEW)
+apps/web/lib/open-agents-config/sandbox-paths.ts      (NEW)
+apps/web/lib/open-agents-config/setup.ts              (NEW)
+apps/web/lib/open-agents-config/setup-hash.ts         (NEW; covers env)
+apps/web/lib/open-agents-config/processes.ts          (NEW)
+apps/web/lib/sandbox/connect.ts                       (NEW: wrapper)
+apps/web/lib/sandbox/log-buffer.ts                    (NEW)
+apps/web/app/api/sandbox/route.ts                     (pre-fetch + configWarning)
+apps/web/app/api/sessions/[sessionId]/dev-server/route.ts  (declared path)
+apps/web/app/api/sessions/[sessionId]/sandbox-logs/route.ts             (NEW)
+apps/web/app/api/sessions/[sessionId]/sandbox-logs/stream/route.ts      (NEW)
+apps/web/app/api/sessions/[sessionId]/sandbox-exec/route.ts             (NEW)
+apps/web/app/sessions/[sessionId]/chats/[chatId]/sandbox-logs-panel.tsx (NEW)
+packages/sandbox/vercel/state.ts                      (+ports?)
+packages/sandbox/interface.ts                         (+SandboxLogEntry, onLog)
+packages/sandbox/vercel/sandbox.ts                    (inline onLog calls)
+packages/sandbox/vercel/command-logger.ts             (DELETED in cleanup)
+.oxlintrc.json                                        (+no-restricted-imports)
 + tests for each new module
 ```

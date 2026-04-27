@@ -107,7 +107,6 @@ async function connectNamedSandbox(
 
   try {
     return await VercelSandbox.connect(sandboxName, {
-      env: options?.env,
       githubToken: options?.githubToken,
       hooks: options?.hooks,
       remainingTimeout,
@@ -130,6 +129,10 @@ async function connectNamedSandbox(
  * - If `snapshotId` is present without `sandboxName`, restores from a legacy snapshot
  * - If `source` is present, creates a new sandbox and prepares the repo
  * - Otherwise, creates an empty sandbox
+ *
+ * `options.env` is forwarded only to `VercelSandbox.create` (Sandbox.create
+ * accepts default env vars that the Vercel server stores on the sandbox);
+ * subsequent reconnects via `Sandbox.get` inherit those defaults automatically.
  */
 export async function connectVercel(
   state: VercelState,

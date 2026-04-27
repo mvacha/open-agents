@@ -1,8 +1,8 @@
-import { connectSandbox } from "@open-harness/sandbox";
 import {
   requireAuthenticatedUser,
   requireOwnedSessionWithSandboxGuard,
 } from "@/app/api/sessions/_lib/session-context";
+import { connectSandboxForSession } from "@/lib/sandbox/connect";
 import { isSandboxActive } from "@/lib/sandbox/utils";
 
 interface GitStatusRequest {
@@ -100,7 +100,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const sandbox = await connectSandbox(sandboxState);
+    const sandbox = await connectSandboxForSession(sandboxState, sessionId);
     const cwd = sandbox.workingDirectory;
 
     // Get current branch - detect detached HEAD explicitly

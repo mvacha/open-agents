@@ -18,4 +18,10 @@ export interface VercelState {
   snapshotId?: string;
   /** Timestamp (ms) when the current runtime session expires */
   expiresAt?: number;
+  /**
+   * Ports exposed by the sandbox at creation time.
+   * Persisted so the dev-server route can verify declared ports remain
+   * in sync with the running sandbox without recreating it implicitly.
+   */
+  ports?: number[];
 }

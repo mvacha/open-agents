@@ -75,4 +75,15 @@ export interface GitProvider {
   }): Promise<PrStatusResult>;
   buildPullRequestUrl(ref: RepoRef, prNumber: number): string;
   buildRepoWebUrl(ref: RepoRef): string;
+  /**
+   * Fetch a file's contents from the repository at a specific branch.
+   * Returns the file contents as a UTF-8 string, or `null` when the file
+   * does not exist (404). All other failures throw.
+   */
+  fetchRepoFile(args: {
+    ref: RepoRef;
+    branch: string;
+    path: string;
+    token: string;
+  }): Promise<string | null>;
 }

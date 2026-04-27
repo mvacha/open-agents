@@ -97,5 +97,24 @@
     "./node_modules/ultracite/config/oxlint/core/.oxlintrc.json",
     "./node_modules/ultracite/config/oxlint/react/.oxlintrc.json",
     "./node_modules/ultracite/config/oxlint/next/.oxlintrc.json"
+  ],
+  "overrides": [
+    {
+      "files": ["apps/web/**/*.ts", "apps/web/**/*.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@open-harness/sandbox",
+                "importNames": ["connectSandbox"],
+                "message": "Use connectSandboxForSession from @/lib/sandbox/connect when a sessionId is available so the sandbox-logs hook is wired automatically. Direct connectSandbox is only allowed inside the wrapper itself."
+              }
+            ]
+          }
+        ]
+      }
+    }
   ]
 }

@@ -1,6 +1,7 @@
 import "server-only";
 import { getAdoClient } from "@/lib/azure-devops/client";
 import { getAzureDevOpsConfig } from "@/lib/azure-devops/config";
+import { fetchAdoRepoFile } from "@/lib/azure-devops/fetch-repo-file";
 import {
   buildAdoAuthRemoteUrl,
   buildAdoPullRequestUrl,
@@ -128,5 +129,20 @@ export const azureDevOpsProvider: GitProvider = {
       throw new Error("buildRepoWebUrl called with non-ADO ref");
     }
     return buildAdoRepoWebUrl(ref);
+  },
+
+  async fetchRepoFile({ ref, branch, path, token }) {
+    const ado = ensureAdo(ref);
+    if (!ado) {
+      throw new Error("fetchRepoFile called with non-ADO ref");
+    }
+    return fetchAdoRepoFile({
+      org: ado.org,
+      project: ado.project,
+      repo: ado.repo,
+      branch,
+      path,
+      pat: token,
+    });
   },
 };

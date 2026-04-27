@@ -1,14 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { DevServerLaunchResponse } from "@/app/api/sessions/[sessionId]/dev-server/route";
+
+export type DevServerInfo = {
+  packagePath: string;
+  port: number;
+  url: string;
+};
 
 export type DevServerLaunchState =
   | { status: "idle" }
   | { status: "starting" }
-  | { status: "stopping"; info: DevServerLaunchResponse }
+  | { status: "stopping"; info: DevServerInfo }
   | { status: "error"; message: string }
-  | { status: "ready"; info: DevServerLaunchResponse };
+  | { status: "ready"; info: DevServerInfo };
 
 export interface DevServerControls {
   state: DevServerLaunchState;
@@ -31,8 +36,35 @@ function getErrorMessage(body: unknown, fallback: string): string {
   return body.error;
 }
 
-function parseLaunchResponse(body: unknown): DevServerLaunchResponse | null {
+function parseLaunchResponse(body: unknown): DevServerInfo | null {
   if (!isRecord(body)) {
+    return null;
+  }
+
+  const mode = body.mode;
+
+  if (mode === "declared") {
+    const processes = body.processes;
+    if (!Array.isArray(processes) || processes.length === 0) {
+      return null;
+    }
+    const primary = processes[0];
+    if (!isRecord(primary)) {
+      return null;
+    }
+    const { name, port, url } = primary;
+    if (
+      typeof name !== "string" ||
+      typeof port !== "number" ||
+      !Number.isFinite(port) ||
+      typeof url !== "string"
+    ) {
+      return null;
+    }
+    return { packagePath: name, port, url };
+  }
+
+  if (mode !== undefined && mode !== "heuristic") {
     return null;
   }
 

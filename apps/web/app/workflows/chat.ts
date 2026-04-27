@@ -796,6 +796,7 @@ const runAgentStep = async (
 
   const stepStartedAt = new Date();
   const { webAgent } = await import("@/app/config");
+  const { makeSandboxLogHook } = await import("@/lib/sandbox/log-buffer");
 
   const abortController = new AbortController();
   const stopMonitor = startStopMonitor(workflowRunId, abortController);
@@ -821,9 +822,22 @@ const runAgentStep = async (
     let totalMessageUsage = existingTotalMessageUsage;
     let totalMessageCost = existingTotalMessageCost;
 
+    const agentOptionsWithLogHook: OpenHarnessAgentCallOptions = {
+      ...agentOptions,
+      sandbox: {
+        ...agentOptions.sandbox,
+        hooks: {
+          ...agentOptions.sandbox.hooks,
+          onLog:
+            agentOptions.sandbox.hooks?.onLog ??
+            makeSandboxLogHook(sessionId, "agent"),
+        },
+      },
+    };
+
     const result = await webAgent.stream({
       messages,
-      options: agentOptions,
+      options: agentOptionsWithLogHook,
       abortSignal: abortController.signal,
     });
 

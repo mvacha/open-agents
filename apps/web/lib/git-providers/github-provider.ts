@@ -1,5 +1,5 @@
 import "server-only";
-import { fetchGitHubBranches } from "@/lib/github/api";
+import { fetchGitHubBranches, fetchGitHubRepoFile } from "@/lib/github/api";
 import {
   createPullRequest,
   findPullRequestByBranch,
@@ -121,5 +121,19 @@ export const gitHubProvider: GitProvider = {
       throw new Error("buildRepoWebUrl called with non-github ref");
     }
     return `https://github.com/${ref.owner}/${ref.repo}`;
+  },
+
+  async fetchRepoFile({ ref, branch, path, token }) {
+    const gh = ensureGitHub(ref);
+    if (!gh) {
+      throw new Error("fetchRepoFile called with non-github ref");
+    }
+    return fetchGitHubRepoFile({
+      owner: gh.owner,
+      repo: gh.repo,
+      branch,
+      path,
+      token,
+    });
   },
 };

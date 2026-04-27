@@ -32,6 +32,24 @@ type SessionLayoutShellProps = {
   children: ReactNode;
 };
 
+const PANEL_WIDTH_STORAGE_KEY = "open-harness:panel-width";
+const PANEL_DEFAULT_WIDTH = 288; // matches the previous w-72
+const PANEL_MIN_WIDTH = 240;
+const PANEL_MAX_WIDTH = 720;
+
+function clampPanelWidth(value: number, max: number = PANEL_MAX_WIDTH): number {
+  return Math.max(PANEL_MIN_WIDTH, Math.min(max, value));
+}
+
+function loadStoredPanelWidth(): number {
+  if (typeof window === "undefined") return PANEL_DEFAULT_WIDTH;
+  const raw = window.localStorage.getItem(PANEL_WIDTH_STORAGE_KEY);
+  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  return Number.isFinite(parsed)
+    ? clampPanelWidth(parsed)
+    : PANEL_DEFAULT_WIDTH;
+}
+
 /**
  * Inner component that reads panelContent from context and renders
  * the horizontal split: left column (header + tabs + page) | right panel.
@@ -43,10 +61,70 @@ function SessionLayoutInner({
   activeChatId: string;
   children: ReactNode;
 }) {
-  const { panelPortalRef, gitPanelOpen, setGitPanelOpen } = useGitPanel();
+  const { panelPortalRef, activePanel, setActivePanel } = useGitPanel();
+  const isPanelOpen = activePanel !== null;
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [panelWidth, setPanelWidth] = useState<number>(PANEL_DEFAULT_WIDTH);
+  const [isResizing, setIsResizing] = useState(false);
+
+  // Hydrate from localStorage after mount (avoids SSR mismatch).
+  useEffect(() => {
+    setPanelWidth(loadStoredPanelWidth());
+  }, []);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMove = (event: MouseEvent) => {
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      // Cap to half the container so the panel can never push the left column
+      // to zero width.
+      const dynamicMax = Math.max(
+        PANEL_MIN_WIDTH,
+        Math.floor(rect.width - PANEL_MIN_WIDTH),
+      );
+      const next = clampPanelWidth(rect.right - event.clientX, dynamicMax);
+      setPanelWidth(next);
+    };
+    const handleUp = () => setIsResizing(false);
+
+    document.addEventListener("mousemove", handleMove);
+    document.addEventListener("mouseup", handleUp);
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    return () => {
+      document.removeEventListener("mousemove", handleMove);
+      document.removeEventListener("mouseup", handleUp);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [isResizing]);
+
+  // Persist width once the user finishes dragging.
+  useEffect(() => {
+    if (isResizing) return;
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      PANEL_WIDTH_STORAGE_KEY,
+      String(Math.round(panelWidth)),
+    );
+  }, [isResizing, panelWidth]);
+
+  const handleResizeStart = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      setIsResizing(true);
+    },
+    [],
+  );
 
   return (
-    <div className="relative flex h-full overflow-hidden">
+    <div ref={containerRef} className="relative flex h-full overflow-hidden">
       {/* Left column: header + tabs + page content */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <SessionHeader />
@@ -55,24 +133,44 @@ function SessionLayoutInner({
       </div>
 
       {/* Mobile backdrop for outside-click dismissal */}
-      {gitPanelOpen && (
+      {isPanelOpen && (
         <button
           type="button"
           aria-label="Close right sidebar"
           className="absolute inset-0 z-20 bg-background/20 sm:hidden"
-          onClick={() => setGitPanelOpen(false)}
+          onClick={() => setActivePanel(null)}
         />
       )}
 
-      {/* Portal target for the git panel — slideover on mobile, sidebar on larger screens */}
+      {/* Portal target for the active panel — slideover on mobile, sidebar on larger screens */}
       <div
         ref={panelPortalRef}
-        className={`absolute right-0 top-0 z-30 flex h-full w-72 flex-col overflow-hidden border-l border-border bg-background shadow-lg transition-transform duration-200 ease-in-out sm:relative sm:right-auto sm:top-auto sm:z-0 sm:shrink-0 sm:translate-x-0 sm:shadow-none sm:transition-[width] ${
-          gitPanelOpen
-            ? "translate-x-0 sm:w-72 sm:border-l xl:w-80"
+        style={
+          isPanelOpen
+            ? ({
+                "--panel-width": `${panelWidth}px`,
+              } as React.CSSProperties)
+            : undefined
+        }
+        className={`absolute right-0 top-0 z-30 flex h-full w-72 flex-col overflow-hidden border-l border-border bg-background shadow-lg ${
+          isResizing ? "" : "transition-transform duration-200 ease-in-out"
+        } sm:relative sm:right-auto sm:top-auto sm:z-0 sm:shrink-0 sm:translate-x-0 sm:shadow-none ${
+          isPanelOpen
+            ? "translate-x-0 sm:w-[var(--panel-width)] sm:border-l"
             : "translate-x-full sm:w-0 sm:border-l-0"
         }`}
-      />
+      >
+        {/* Drag handle — only on sm: viewports where the panel is a sidebar. */}
+        {isPanelOpen && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize panel"
+            onMouseDown={handleResizeStart}
+            className="-left-1 absolute top-0 z-10 hidden h-full w-2 cursor-col-resize select-none hover:bg-border/60 sm:block"
+          />
+        )}
+      </div>
     </div>
   );
 }

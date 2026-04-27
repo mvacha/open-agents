@@ -91,6 +91,7 @@ function makeFakeProvider(
     getPullRequestStatus: async () => ({ success: true, status: "open" }),
     buildPullRequestUrl: () => "https://example.com/pr/1",
     buildRepoWebUrl: () => "https://example.com/repo",
+    fetchRepoFile: async () => null,
     ...overrides,
   };
 }
@@ -379,6 +380,7 @@ describe("performAutoCreatePr", () => {
       buildPullRequestUrl: () =>
         "https://dev.azure.com/o/p/_git/r/pullrequest/7",
       buildRepoWebUrl: () => "https://dev.azure.com/o/p/_git/r",
+      fetchRepoFile: async () => null,
     };
 
     const result = await performAutoCreatePr({

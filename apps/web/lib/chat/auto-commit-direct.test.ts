@@ -123,6 +123,7 @@ function makeFakeProvider(
     getPullRequestStatus: async () => ({ success: true, status: "open" }),
     buildPullRequestUrl: () => "https://example.com/pr/1",
     buildRepoWebUrl: () => "https://example.com/repo",
+    fetchRepoFile: async () => null,
     ...overrides,
   };
 }

@@ -176,8 +176,8 @@ export async function persistSandboxState(
 ): Promise<void> {
   "use step";
   try {
-    const { connectSandbox } = await import("@open-harness/sandbox");
-    const sandbox = await connectSandbox(sandboxState);
+    const { connectSandboxForSession } = await import("@/lib/sandbox/connect");
+    const sandbox = await connectSandboxForSession(sandboxState, sessionId);
     const currentState = sandbox.getState?.() as SandboxState | undefined;
     if (currentState) {
       await updateSession(sessionId, {
@@ -352,9 +352,12 @@ export async function refreshDiffCache(
 ): Promise<void> {
   "use step";
   try {
-    const { connectSandbox } = await import("@open-harness/sandbox");
+    const { connectSandboxForSession } = await import("@/lib/sandbox/connect");
     const { computeAndCacheDiff } = await import("@/lib/diff/compute-diff");
-    const sandbox: Sandbox = await connectSandbox(sandboxState);
+    const sandbox: Sandbox = await connectSandboxForSession(
+      sandboxState,
+      sessionId,
+    );
     await computeAndCacheDiff({ sandbox, sessionId });
   } catch (error) {
     console.error("[workflow] Failed to refresh diff cache:", error);
@@ -362,12 +365,17 @@ export async function refreshDiffCache(
 }
 
 export async function hasAutoCommitChangesStep(params: {
+  sessionId?: string;
   sandboxState: SandboxState;
 }): Promise<boolean> {
   "use step";
   try {
+    // eslint-disable-next-line no-restricted-imports -- no-session fallback path; the session-aware wrapper is used above when available.
     const { connectSandbox } = await import("@open-harness/sandbox");
-    const sandbox: Sandbox = await connectSandbox(params.sandboxState);
+    const { connectSandboxForSession } = await import("@/lib/sandbox/connect");
+    const sandbox: Sandbox = params.sessionId
+      ? await connectSandboxForSession(params.sandboxState, params.sessionId)
+      : await connectSandbox(params.sandboxState);
     const statusResult = await sandbox.exec(
       "git status --porcelain",
       sandbox.workingDirectory,
@@ -395,7 +403,7 @@ export async function runAutoCommitStep(params: {
 }): Promise<AutoCommitResult> {
   "use step";
   try {
-    const { connectSandbox } = await import("@open-harness/sandbox");
+    const { connectSandboxForSession } = await import("@/lib/sandbox/connect");
     const { performAutoCommit } = await import("@/lib/chat/auto-commit-direct");
     const { getSessionById } = await import("@/lib/db/sessions");
     const { getProviderForSession, sessionToRepoRef } =
@@ -426,7 +434,10 @@ export async function runAutoCommitStep(params: {
       };
     }
 
-    const sandbox = await connectSandbox(params.sandboxState);
+    const sandbox = await connectSandboxForSession(
+      params.sandboxState,
+      params.sessionId,
+    );
     return await performAutoCommit({
       sandbox,
       userId: params.userId,
@@ -455,7 +466,7 @@ export async function runAutoCreatePrStep(params: {
 }): Promise<AutoCreatePrResult> {
   "use step";
   try {
-    const { connectSandbox } = await import("@open-harness/sandbox");
+    const { connectSandboxForSession } = await import("@/lib/sandbox/connect");
     const { performAutoCreatePr } = await import("@/lib/chat/auto-pr-direct");
     const { getSessionById } = await import("@/lib/db/sessions");
     const { getProviderForSession, sessionToRepoRef } =
@@ -488,7 +499,10 @@ export async function runAutoCreatePrStep(params: {
       };
     }
 
-    const sandbox = await connectSandbox(params.sandboxState);
+    const sandbox = await connectSandboxForSession(
+      params.sandboxState,
+      params.sessionId,
+    );
     const result = await performAutoCreatePr({
       sandbox,
       userId: params.userId,

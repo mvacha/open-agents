@@ -86,7 +86,10 @@ export async function getSandbox(
     );
   }
 
-  return connectSandbox(context.sandbox.state);
+  return connectSandbox(
+    context.sandbox.state,
+    context.sandbox.hooks ? { hooks: context.sandbox.hooks } : {},
+  );
 }
 
 /**

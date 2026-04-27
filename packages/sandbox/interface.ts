@@ -21,6 +21,23 @@ export interface SnapshotResult {
 export type SandboxHook = (sandbox: Sandbox) => Promise<void>;
 
 /**
+ * A single sandbox command log entry, emitted via SandboxHooks.onLog.
+ */
+export interface SandboxLogEntry {
+  sandboxId: string;
+  command: string;
+  exitCode: number | null;
+  stdout?: string;
+  stderr?: string;
+  timestamp: number;
+  /**
+   * Optional caller-defined origin for the command (e.g. "agent", "ui").
+   * Set by the host when wiring the `onLog` hook so consumers can filter.
+   */
+  source?: string;
+}
+
+/**
  * Configuration for sandbox lifecycle hooks.
  */
 export interface SandboxHooks {
@@ -48,6 +65,13 @@ export interface SandboxHooks {
    * @param additionalMs - How much time was added
    */
   onTimeoutExtended?: (sandbox: Sandbox, additionalMs: number) => Promise<void>;
+
+  /**
+   * Called for every sandbox command after it completes.
+   * Use to ship logs to a remote sink (e.g. an in-memory buffer streamed to the UI).
+   * Implementations must not throw — exec calls the hook synchronously.
+   */
+  onLog?: (entry: SandboxLogEntry) => void;
 }
 
 /**
@@ -86,11 +110,6 @@ export interface Sandbox {
    * The working directory for this sandbox.
    */
   readonly workingDirectory: string;
-
-  /**
-   * Environment variables available to commands in the sandbox.
-   */
-  readonly env?: Record<string, string>;
 
   /**
    * The current git branch in the sandbox (if applicable).

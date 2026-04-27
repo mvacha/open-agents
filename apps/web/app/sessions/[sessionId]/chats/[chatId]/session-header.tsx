@@ -8,6 +8,7 @@ import {
   GitPullRequestClosed,
   Link2,
   PanelLeft,
+  Terminal,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,8 @@ export function SessionHeader() {
     gitPanelOpen,
     setGitPanelOpen,
     setGitPanelTab,
+    logsPanelOpen,
+    setLogsPanelOpen,
     hasActionNeeded,
     changesCount,
     hasCommittedChanges,
@@ -104,25 +107,32 @@ export function SessionHeader() {
     openGitPanel();
   }, [gitPanelOpen, openGitPanel, setGitPanelOpen]);
 
+  const handleLogsPanelToggle = useCallback(() => {
+    setLogsPanelOpen(!logsPanelOpen);
+  }, [logsPanelOpen, setLogsPanelOpen]);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      const isGitPanelShortcut =
-        event.code === "KeyB" &&
-        (event.metaKey || event.ctrlKey) &&
-        event.shiftKey &&
-        !event.altKey;
+      if (event.repeat) return;
 
-      if (!isGitPanelShortcut || event.repeat) {
+      const hasMetaOrCtrl = event.metaKey || event.ctrlKey;
+      if (!hasMetaOrCtrl || !event.shiftKey || event.altKey) return;
+
+      if (event.code === "KeyB") {
+        event.preventDefault();
+        handleGitPanelToggle();
         return;
       }
 
-      event.preventDefault();
-      handleGitPanelToggle();
+      if (event.code === "KeyL") {
+        event.preventDefault();
+        handleLogsPanelToggle();
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleGitPanelToggle]);
+  }, [handleGitPanelToggle, handleLogsPanelToggle]);
 
   return (
     <header className="border-b border-border px-3 py-1.5">
@@ -197,6 +207,25 @@ export function SessionHeader() {
         <div className="flex items-center gap-1">
           {/* Portal target for dev server / code editor buttons (rendered from per-chat content) */}
           <div ref={headerActionsRef} className="flex items-center" />
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  "h-7 w-7 shrink-0",
+                  logsPanelOpen && "bg-accent text-accent-foreground",
+                )}
+                onClick={handleLogsPanelToggle}
+              >
+                <Terminal className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              Sandbox logs · ⌘⇧L / Ctrl+Shift+L
+            </TooltipContent>
+          </Tooltip>
 
           <Tooltip>
             <TooltipTrigger asChild>

@@ -1,6 +1,5 @@
 import { checkBotId } from "botid/server";
 import { botIdConfig } from "@/lib/botid";
-import { connectSandbox } from "@open-harness/sandbox";
 import { gateway, generateText } from "ai";
 import {
   ensureForkExists,
@@ -22,6 +21,7 @@ import {
 } from "@/lib/git-providers/resolve";
 import { generatePullRequestContentFromSandbox } from "@/lib/git/pr-content";
 import { getAppCoAuthorTrailer } from "@/lib/github/app-auth";
+import { connectSandboxForSession } from "@/lib/sandbox/connect";
 import { isSandboxActive } from "@/lib/sandbox/utils";
 import { getServerSession } from "@/lib/session/get-server-session";
 
@@ -106,7 +106,10 @@ export async function POST(req: Request) {
   }
 
   // 3. Connect to sandbox
-  const sandbox = await connectSandbox(sessionRecord.sandboxState);
+  const sandbox = await connectSandboxForSession(
+    sessionRecord.sandboxState,
+    sessionId,
+  );
   const cwd = sandbox.workingDirectory;
   let userToken: string | null = null;
   const provider = getProviderForSession(sessionRecord);

@@ -1,10 +1,10 @@
-import { connectSandbox } from "@open-harness/sandbox";
 import {
   requireAuthenticatedUser,
   requireOwnedSession,
   requireOwnedSessionWithSandboxGuard,
 } from "@/app/api/sessions/_lib/session-context";
 import { updateSession } from "@/lib/db/sessions";
+import { connectSandboxForSession } from "@/lib/sandbox/connect";
 import {
   DEFAULT_SANDBOX_PORTS,
   DEFAULT_SANDBOX_TIMEOUT_MS,
@@ -73,7 +73,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const sandbox = await connectSandbox(sandboxState);
+    const sandbox = await connectSandboxForSession(sandboxState, sessionId);
     await sandbox.stop();
 
     const clearedState = clearSandboxState(sessionRecord.sandboxState);
@@ -176,12 +176,13 @@ export async function PUT(req: Request) {
   }
 
   const restoreLegacySnapshot = () =>
-    connectSandbox(
+    connectSandboxForSession(
       {
         type: sandboxType,
         sandboxName: getSessionSandboxName(sessionId),
         snapshotId: legacySnapshotId ?? undefined,
       },
+      sessionId,
       {
         timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
         ports: DEFAULT_SANDBOX_PORTS,
@@ -198,8 +199,9 @@ export async function PUT(req: Request) {
       ? await (async () => {
           try {
             restoredFrom = persistentSandboxName;
-            return await connectSandbox(
+            return await connectSandboxForSession(
               { type: sandboxType, sandboxName: persistentSandboxName },
+              sessionId,
               {
                 timeout: DEFAULT_SANDBOX_TIMEOUT_MS,
                 ports: DEFAULT_SANDBOX_PORTS,

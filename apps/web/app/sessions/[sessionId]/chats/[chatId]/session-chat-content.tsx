@@ -179,6 +179,10 @@ const FileTabView = dynamic(
 const GitPanel = dynamic(() => import("./git-panel").then((m) => m.GitPanel), {
   ssr: false,
 });
+const SandboxLogsPanel = dynamic(
+  () => import("./sandbox-logs-panel").then((m) => m.SandboxLogsPanel),
+  { ssr: false },
+);
 
 const emptySubscribe = () => () => {};
 
@@ -1093,6 +1097,7 @@ export function SessionChatContent({
   const {
     activeView,
     gitPanelOpen,
+    logsPanelOpen,
     shareRequested,
     setShareRequested,
     setHasActionNeeded,
@@ -3111,12 +3116,24 @@ export function SessionChatContent({
     />
   ) : null;
 
+  const sandboxLogsElement = logsPanelOpen ? (
+    <SandboxLogsPanel
+      sessionId={session.id}
+      hasSandbox={sandboxInfo !== null}
+    />
+  ) : null;
+
   return (
     <>
       {/* Git panel portaled to layout-level for full page height */}
       {gitPanelOpen &&
         panelPortalRef.current &&
         createPortal(gitPanelElement, panelPortalRef.current)}
+
+      {/* Sandbox logs panel portaled to layout-level for full page height */}
+      {logsPanelOpen &&
+        panelPortalRef.current &&
+        createPortal(sandboxLogsElement, panelPortalRef.current)}
 
       {/* Header actions portaled from chat-level state */}
       {headerActionsRef.current &&

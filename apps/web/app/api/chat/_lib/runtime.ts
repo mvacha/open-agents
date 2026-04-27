@@ -1,7 +1,8 @@
 import { discoverSkills } from "@open-harness/agent";
-import { connectSandbox } from "@open-harness/sandbox";
+import type { Sandbox } from "@open-harness/sandbox";
 import { getUserGitHubToken } from "@/lib/github/user-token";
 import { DEFAULT_SANDBOX_PORTS } from "@/lib/sandbox/config";
+import { connectSandboxForSession } from "@/lib/sandbox/connect";
 import {
   getVercelCliSandboxSetup,
   syncVercelCliAuthToSandbox,
@@ -11,7 +12,7 @@ import { getCachedSkills, setCachedSkills } from "@/lib/skills-cache";
 import type { SessionRecord } from "./chat-context";
 
 type DiscoveredSkills = Awaited<ReturnType<typeof discoverSkills>>;
-type ConnectedSandbox = Awaited<ReturnType<typeof connectSandbox>>;
+type ConnectedSandbox = Sandbox;
 type ActiveSandboxState = NonNullable<SessionRecord["sandboxState"]>;
 
 async function loadSessionSkills(
@@ -69,7 +70,7 @@ export async function createChatRuntime(params: {
     }),
   ]);
 
-  const sandbox = await connectSandbox(sandboxState, {
+  const sandbox = await connectSandboxForSession(sandboxState, sessionId, {
     githubToken: githubToken ?? undefined,
     ports: DEFAULT_SANDBOX_PORTS,
   });

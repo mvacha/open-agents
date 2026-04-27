@@ -1,8 +1,9 @@
-import { connectSandbox } from "@open-harness/sandbox";
+import type { Sandbox } from "@open-harness/sandbox";
 import {
   requireAuthenticatedUser,
   requireOwnedSessionWithSandboxGuard,
 } from "@/app/api/sessions/_lib/session-context";
+import { connectSandboxForSession } from "@/lib/sandbox/connect";
 import { isSandboxActive } from "@/lib/sandbox/utils";
 
 type RouteContext = {
@@ -59,7 +60,7 @@ function isValidRepoRelativePath(value: string): boolean {
 async function ensurePathHasUncommittedChanges(params: {
   cwd: string;
   path: string;
-  sandbox: Awaited<ReturnType<typeof connectSandbox>>;
+  sandbox: Sandbox;
 }): Promise<{ ok: true } | { ok: false; error: string; status: number }> {
   const { cwd, path, sandbox } = params;
   const statusResult = await sandbox.exec(
@@ -90,7 +91,7 @@ async function discardPathChanges(params: {
   cwd: string;
   path: string;
   hasHead: boolean;
-  sandbox: Awaited<ReturnType<typeof connectSandbox>>;
+  sandbox: Sandbox;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const { cwd, path, hasHead, sandbox } = params;
   const quotedPath = shellQuote(path);
@@ -204,7 +205,7 @@ export async function POST(req: Request, context: RouteContext) {
   }
 
   try {
-    const sandbox = await connectSandbox(sandboxState);
+    const sandbox = await connectSandboxForSession(sandboxState, sessionId);
     const cwd = sandbox.workingDirectory;
 
     const repoResult = await sandbox.exec(
