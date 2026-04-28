@@ -3202,7 +3202,8 @@ export function SessionChatContent({
                       </Tooltip>
                     </div>
                   ) : devServer.state.status === "starting" ||
-                    devServer.state.status === "stopping" ? (
+                    devServer.state.status === "stopping" ||
+                    devServer.state.status === "loading" ? (
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
@@ -3217,7 +3218,9 @@ export function SessionChatContent({
                       <TooltipContent side="bottom">
                         {devServer.state.status === "starting"
                           ? "Starting dev server..."
-                          : "Stopping dev server..."}
+                          : devServer.state.status === "stopping"
+                            ? "Stopping dev server..."
+                            : "Checking dev server..."}
                       </TooltipContent>
                     </Tooltip>
                   ) : (

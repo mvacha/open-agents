@@ -43,6 +43,14 @@ export interface StoppedProcess {
   pid: string | null;
 }
 
+export interface DeclaredProcessStatus {
+  name: string;
+  cwd: string;
+  port: number;
+  running: boolean;
+  pid: string | null;
+}
+
 async function ensurePidsDir(sandbox: LaunchSandbox): Promise<void> {
   if (!sandbox.mkdir) {
     return;
@@ -182,6 +190,28 @@ export async function launchDeclaredProcesses(args: {
   }
 
   return { ok: true, processes: launched };
+}
+
+export async function getDeclaredProcessStatuses(args: {
+  sandbox: LaunchSandbox;
+  processes: readonly DevProcess[];
+}): Promise<DeclaredProcessStatus[]> {
+  const { sandbox, processes } = args;
+  const statuses: DeclaredProcessStatus[] = [];
+
+  for (const process of processes) {
+    const pid = await readPid(sandbox, process.name);
+    const running = pid !== null && (await pidIsAlive(sandbox, pid));
+    statuses.push({
+      name: process.name,
+      cwd: process.cwd,
+      port: process.port,
+      running,
+      pid: running ? pid : null,
+    });
+  }
+
+  return statuses;
 }
 
 export async function stopDeclaredProcesses(args: {

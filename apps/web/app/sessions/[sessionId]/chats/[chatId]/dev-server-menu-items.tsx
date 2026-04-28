@@ -19,7 +19,8 @@ export function DevServerMenuItems({
 }: DevServerMenuItemsProps) {
   const isPrimaryBusy =
     devServer.state.status === "starting" ||
-    devServer.state.status === "stopping";
+    devServer.state.status === "stopping" ||
+    devServer.state.status === "loading";
 
   return (
     <>

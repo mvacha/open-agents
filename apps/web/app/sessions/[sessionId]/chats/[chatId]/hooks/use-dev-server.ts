@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type DevServerInfo = {
   packagePath: string;
@@ -9,6 +9,7 @@ export type DevServerInfo = {
 };
 
 export type DevServerLaunchState =
+  | { status: "loading" }
   | { status: "idle" }
   | { status: "starting" }
   | { status: "stopping"; info: DevServerInfo }
@@ -34,6 +35,66 @@ function getErrorMessage(body: unknown, fallback: string): string {
   }
 
   return body.error;
+}
+
+type StatusProbeResult =
+  | { kind: "ready"; info: DevServerInfo }
+  | { kind: "starting" }
+  | { kind: "stopped" };
+
+function parseStatusResponse(body: unknown): StatusProbeResult | null {
+  if (!isRecord(body)) {
+    return null;
+  }
+
+  const mode = body.mode;
+  const status = body.status;
+
+  if (mode === "declared") {
+    if (status === "ready") {
+      const processes = body.processes;
+      if (!Array.isArray(processes) || processes.length === 0) {
+        return null;
+      }
+      const primary = processes[0];
+      if (!isRecord(primary)) {
+        return null;
+      }
+      const { name, port, url } = primary;
+      if (
+        typeof name !== "string" ||
+        typeof port !== "number" ||
+        !Number.isFinite(port) ||
+        typeof url !== "string"
+      ) {
+        return null;
+      }
+      return { kind: "ready", info: { packagePath: name, port, url } };
+    }
+    if (status === "starting") {
+      return { kind: "starting" };
+    }
+    return { kind: "stopped" };
+  }
+
+  if (mode !== "heuristic") {
+    return null;
+  }
+
+  if (status === "ready") {
+    const { packagePath, port, url } = body;
+    if (
+      typeof packagePath !== "string" ||
+      typeof port !== "number" ||
+      !Number.isFinite(port) ||
+      typeof url !== "string"
+    ) {
+      return null;
+    }
+    return { kind: "ready", info: { packagePath, port, url } };
+  }
+
+  return { kind: "stopped" };
 }
 
 function parseLaunchResponse(body: unknown): DevServerInfo | null {
@@ -92,17 +153,83 @@ export function useDevServer({
   sessionId: string;
   canRun: boolean;
 }): DevServerControls {
-  const [state, setState] = useState<DevServerLaunchState>({ status: "idle" });
-
-  useEffect(() => {
-    setState({ status: "idle" });
-  }, [sessionId]);
+  const [state, setState] = useState<DevServerLaunchState>({
+    status: "loading",
+  });
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   useEffect(() => {
     if (!canRun) {
       setState({ status: "idle" });
+      return;
     }
-  }, [canRun]);
+
+    setState({ status: "loading" });
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    async function probe() {
+      try {
+        const response = await fetch(`/api/sessions/${sessionId}/dev-server`);
+        if (cancelled) {
+          return;
+        }
+        const body: unknown = await response.json().catch(() => null);
+
+        const current = stateRef.current.status;
+        if (
+          current === "ready" ||
+          current === "stopping" ||
+          current === "error"
+        ) {
+          return;
+        }
+
+        if (!response.ok) {
+          setState({ status: "idle" });
+          return;
+        }
+
+        const probeResult = parseStatusResponse(body);
+        if (!probeResult) {
+          setState({ status: "idle" });
+          return;
+        }
+
+        if (probeResult.kind === "ready") {
+          setState({ status: "ready", info: probeResult.info });
+          return;
+        }
+
+        if (probeResult.kind === "starting") {
+          setState({ status: "starting" });
+          timeoutId = setTimeout(() => {
+            void probe();
+          }, 2000);
+          return;
+        }
+
+        setState({ status: "idle" });
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        console.error("Failed to probe dev server status:", error);
+        setState({ status: "idle" });
+      }
+    }
+
+    void probe();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [sessionId, canRun]);
 
   const openDevServerUrl = useCallback((url: string) => {
     window.open(url, "_blank", "noopener,noreferrer");
@@ -114,7 +241,11 @@ export function useDevServer({
       return;
     }
 
-    if (state.status === "starting" || state.status === "stopping") {
+    if (
+      state.status === "starting" ||
+      state.status === "stopping" ||
+      state.status === "loading"
+    ) {
       return;
     }
 
@@ -188,9 +319,11 @@ export function useDevServer({
         ? "Starting Dev Server..."
         : state.status === "stopping"
           ? "Stopping Dev Server..."
-          : state.status === "error"
-            ? "Retry Dev Server"
-            : "Run Dev Server";
+          : state.status === "loading"
+            ? "Checking Dev Server..."
+            : state.status === "error"
+              ? "Retry Dev Server"
+              : "Run Dev Server";
   const menuDetail =
     state.status === "ready" || state.status === "stopping"
       ? state.info.url

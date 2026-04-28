@@ -5,12 +5,17 @@ import {
   connectSandbox,
   type SandboxState,
 } from "@open-harness/sandbox";
+import { maybeAutostartDevServer } from "./dev-server-autostart";
 import { makeSandboxLogHook } from "./log-buffer";
 
 /**
  * Session-scoped wrapper around `connectSandbox` that always wires the
  * `onLog` hook to the in-memory log buffer streamed to the UI via
  * `/api/sessions/:sessionId/sandbox-logs/stream`.
+ *
+ * Also fires a fire-and-forget dev server autostart probe — if
+ * `.open-agents/config.json` exists with `autostart: true` (the default)
+ * and the declared processes aren't already running, they get launched.
  *
  * Use this everywhere a sandbox is connected on behalf of a session.
  * Call `connectSandbox` directly only when there is no session
@@ -21,11 +26,15 @@ export async function connectSandboxForSession(
   sessionId: string,
   options?: ConnectOptions,
 ): ReturnType<typeof connectSandbox> {
-  return connectSandbox(sandboxState, {
+  const sandbox = await connectSandbox(sandboxState, {
     ...options,
     hooks: {
       ...options?.hooks,
       onLog: options?.hooks?.onLog ?? makeSandboxLogHook(sessionId),
     },
   });
+
+  maybeAutostartDevServer({ sandbox, sessionId });
+
+  return sandbox;
 }

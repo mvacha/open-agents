@@ -26,6 +26,21 @@ describe("openAgentsConfigSchema", () => {
     expect(parsed.dev).toHaveLength(2);
   });
 
+  it("defaults autostart to true", () => {
+    const parsed = openAgentsConfigSchema.parse({
+      dev: [{ name: "web", run: "bun run dev", port: 5173 }],
+    });
+    expect(parsed.autostart).toBe(true);
+  });
+
+  it("respects an explicit autostart value", () => {
+    const parsed = openAgentsConfigSchema.parse({
+      autostart: false,
+      dev: [{ name: "web", run: "bun run dev", port: 5173 }],
+    });
+    expect(parsed.autostart).toBe(false);
+  });
+
   it("rejects missing dev", () => {
     expect(() => openAgentsConfigSchema.parse({})).toThrow();
   });

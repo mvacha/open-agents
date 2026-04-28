@@ -5,6 +5,7 @@ import {
   requireOwnedSessionWithSandboxGuard,
 } from "@/app/api/sessions/_lib/session-context";
 import {
+  getDeclaredProcessStatuses,
   launchDeclaredProcesses,
   stopDeclaredProcesses,
 } from "@/lib/open-agents-config/processes";
@@ -41,6 +42,34 @@ export type DevServerDeclaredLaunchResponse = {
 export type DevServerLaunchResponse =
   | DevServerHeuristicLaunchResponse
   | DevServerDeclaredLaunchResponse;
+
+export type DevServerHeuristicStatus =
+  | { mode: "heuristic"; status: "stopped" }
+  | {
+      mode: "heuristic";
+      status: "ready";
+      packagePath: string;
+      port: number;
+      url: string;
+    };
+
+export type DevServerDeclaredProcessStatus = {
+  name: string;
+  cwd: string;
+  port: number;
+  running: boolean;
+  url?: string | undefined;
+};
+
+export type DevServerDeclaredStatus = {
+  mode: "declared";
+  status: "stopped" | "starting" | "ready";
+  processes: DevServerDeclaredProcessStatus[];
+};
+
+export type DevServerStatusResponse =
+  | DevServerHeuristicStatus
+  | DevServerDeclaredStatus;
 
 export type DevServerStopResponse =
   | {
@@ -1012,6 +1041,128 @@ async function handleDeclaredLaunch(args: {
   }
 
   return Response.json(declaredProcessesToResponse(sandbox, config));
+}
+
+function declaredStatusResponse(
+  sandbox: ConnectedSandbox,
+  config: OpenAgentsConfig,
+  statuses: Awaited<ReturnType<typeof getDeclaredProcessStatuses>>,
+): DevServerDeclaredStatus {
+  const processes: DevServerDeclaredProcessStatus[] = config.dev.map(
+    (process, index) => {
+      const status = statuses.find((s) => s.name === process.name);
+      const running = status?.running ?? false;
+      return {
+        name: process.name,
+        cwd: process.cwd,
+        port: process.port,
+        running,
+        ...(index === 0 && running && sandbox.domain
+          ? { url: sandbox.domain(process.port) }
+          : {}),
+      };
+    },
+  );
+
+  const allRunning = processes.every((p) => p.running);
+  const noneRunning = processes.every((p) => !p.running);
+  const aggregateStatus = allRunning
+    ? "ready"
+    : noneRunning
+      ? "stopped"
+      : "starting";
+
+  return {
+    mode: "declared",
+    status: aggregateStatus,
+    processes,
+  };
+}
+
+export async function GET(_req: Request, context: RouteContext) {
+  const authResult = await requireAuthenticatedUser();
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
+  const { sessionId } = await context.params;
+
+  try {
+    const sandboxResult = await connectDevServerSandboxForSession(
+      sessionId,
+      authResult.userId,
+    );
+    if (!sandboxResult.ok) {
+      return sandboxResult.response;
+    }
+
+    const { sandbox } = sandboxResult;
+
+    let configRead;
+    try {
+      configRead = await readOpenAgentsConfigFromSandbox(sandbox);
+    } catch (error) {
+      console.error("Failed to read .open-agents/config.json:", error);
+      return Response.json(
+        { error: "Failed to read .open-agents/config.json" },
+        { status: 500 },
+      );
+    }
+
+    if (configRead.kind === "invalid") {
+      return Response.json(
+        {
+          error: ".open-agents/config.json is invalid",
+          details: configRead.error,
+        },
+        { status: 422 },
+      );
+    }
+
+    if (configRead.kind === "ok") {
+      const statuses = await getDeclaredProcessStatuses({
+        sandbox,
+        processes: configRead.config.dev,
+      });
+      return Response.json(
+        declaredStatusResponse(sandbox, configRead.config, statuses),
+      );
+    }
+
+    const persistedTarget = await readPersistedDevServerTarget(sandbox);
+    if (!persistedTarget) {
+      return Response.json({
+        mode: "heuristic",
+        status: "stopped",
+      } satisfies DevServerStatusResponse);
+    }
+
+    const pid = await getRunningDevServerPid({
+      sandbox,
+      packageDirAbs: persistedTarget.packageDirAbs,
+      port: persistedTarget.port,
+    });
+    if (!pid) {
+      return Response.json({
+        mode: "heuristic",
+        status: "stopped",
+      } satisfies DevServerStatusResponse);
+    }
+
+    return Response.json({
+      mode: "heuristic",
+      status: "ready",
+      packagePath: persistedTarget.packagePath,
+      port: persistedTarget.port,
+      url: sandbox.domain ? sandbox.domain(persistedTarget.port) : "",
+    } satisfies DevServerStatusResponse);
+  } catch (error) {
+    console.error("Failed to read dev server status:", error);
+    return Response.json(
+      { error: "Failed to read dev server status" },
+      { status: 500 },
+    );
+  }
 }
 
 export async function POST(_req: Request, context: RouteContext) {

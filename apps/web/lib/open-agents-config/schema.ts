@@ -58,6 +58,7 @@ export const openAgentsConfigSchema = z
     setup: z.array(z.string().min(1)).optional(),
     env: envRecordSchema.optional(),
     dev: z.array(devProcessSchema).min(1),
+    autostart: z.boolean().default(true),
   })
   .refine((c) => unique(c.dev.map((p) => p.name)), {
     message: "duplicate process names",

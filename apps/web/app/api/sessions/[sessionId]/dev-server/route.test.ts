@@ -581,6 +581,56 @@ describe("/api/sessions/[sessionId]/dev-server", () => {
     expect(execDetachedMock).toHaveBeenCalledTimes(0);
   });
 
+  test("GET returns heuristic stopped when no persisted state exists", async () => {
+    const { GET } = await routeModulePromise;
+
+    const response = await GET(
+      new Request("http://localhost/api/sessions/session-1/dev-server"),
+      createRouteContext(),
+    );
+    const body = (await response.json()) as { mode: string; status: string };
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ mode: "heuristic", status: "stopped" });
+    expect(detachedLaunches).toHaveLength(0);
+  });
+
+  test("GET returns heuristic ready when a persisted dev server is alive", async () => {
+    const { GET, POST } = await routeModulePromise;
+
+    const launch = await POST(
+      new Request("http://localhost/api/sessions/session-1/dev-server", {
+        method: "POST",
+      }),
+      createRouteContext(),
+    );
+    expect(launch.status).toBe(200);
+    const detachedBefore = detachedLaunches.length;
+
+    const response = await GET(
+      new Request("http://localhost/api/sessions/session-1/dev-server"),
+      createRouteContext(),
+    );
+    const body = (await response.json()) as {
+      mode: string;
+      status: string;
+      packagePath: string;
+      port: number;
+      url: string;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      mode: "heuristic",
+      status: "ready",
+      packagePath: "apps/web",
+      port: 3000,
+      url: "https://sb-3000.vercel.run",
+    });
+    // GET must never launch.
+    expect(detachedLaunches.length).toBe(detachedBefore);
+  });
+
   describe("declared path", () => {
     function seedDeclaredConfig(config: unknown) {
       setMockDirectory("/vercel/sandbox/.open-agents");
@@ -804,6 +854,105 @@ describe("/api/sessions/[sessionId]/dev-server", () => {
       expect(
         existingPaths.has("/vercel/sandbox/.open-agents/.setup-done"),
       ).toBe(false);
+    });
+
+    test("GET reports running declared processes with the primary URL", async () => {
+      const { GET, POST } = await routeModulePromise;
+      currentSessionRecord.sandboxState.ports = [5173, 3001];
+      seedDeclaredConfig({
+        dev: [
+          { name: "web", run: "bun run dev", port: 5173, cwd: "apps/web" },
+          { name: "api", run: "bun run api", port: 3001, cwd: "apps/api" },
+        ],
+      });
+
+      const launch = await POST(
+        new Request("http://localhost/api/sessions/session-1/dev-server", {
+          method: "POST",
+        }),
+        createRouteContext(),
+      );
+      expect(launch.status).toBe(200);
+
+      const detachedBefore = detachedLaunches.length;
+
+      const response = await GET(
+        new Request("http://localhost/api/sessions/session-1/dev-server"),
+        createRouteContext(),
+      );
+      const body = (await response.json()) as {
+        mode: string;
+        status: string;
+        processes: Array<{ name: string; running: boolean; url?: string }>;
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.mode).toBe("declared");
+      expect(body.status).toBe("ready");
+      expect(body.processes).toHaveLength(2);
+      expect(body.processes[0]?.running).toBe(true);
+      expect(body.processes[0]?.url).toBe("https://sb-5173.vercel.run");
+      expect(body.processes[1]?.running).toBe(true);
+      expect(body.processes[1]?.url).toBeUndefined();
+      // GET must never launch.
+      expect(detachedLaunches.length).toBe(detachedBefore);
+    });
+
+    test("GET reports stopped when no declared processes are running", async () => {
+      const { GET } = await routeModulePromise;
+      seedDeclaredConfig({
+        dev: [{ name: "web", run: "bun run dev", port: 5173, cwd: "apps/web" }],
+      });
+
+      const response = await GET(
+        new Request("http://localhost/api/sessions/session-1/dev-server"),
+        createRouteContext(),
+      );
+      const body = (await response.json()) as {
+        mode: string;
+        status: string;
+        processes: Array<{ running: boolean; url?: string }>;
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.mode).toBe("declared");
+      expect(body.status).toBe("stopped");
+      expect(body.processes[0]?.running).toBe(false);
+      expect(body.processes[0]?.url).toBeUndefined();
+      expect(detachedLaunches).toHaveLength(0);
+    });
+
+    test("GET reports starting when only some declared processes are running", async () => {
+      const { GET } = await routeModulePromise;
+      seedDeclaredConfig({
+        dev: [
+          { name: "web", run: "bun run dev", port: 5173, cwd: "apps/web" },
+          { name: "api", run: "bun run api", port: 3001, cwd: "apps/api" },
+        ],
+      });
+      // Pretend "web" is running but "api" hasn't come up yet.
+      setMockDirectory("/vercel/sandbox/.open-agents/.pids");
+      setMockFile("/vercel/sandbox/.open-agents/.pids/web.pid", "10001");
+      runningPids.add("10001");
+
+      const response = await GET(
+        new Request("http://localhost/api/sessions/session-1/dev-server"),
+        createRouteContext(),
+      );
+      const body = (await response.json()) as {
+        mode: string;
+        status: string;
+        processes: Array<{ name: string; running: boolean; url?: string }>;
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.status).toBe("starting");
+      expect(body.processes[0]?.running).toBe(true);
+      // The primary URL is exposed once the first process is up, even if
+      // siblings are still coming up — the UI shows partial readiness.
+      expect(body.processes[0]?.url).toBe("https://sb-5173.vercel.run");
+      expect(body.processes[1]?.running).toBe(false);
+      expect(body.processes[1]?.url).toBeUndefined();
     });
 
     test("DELETE stops all .pid files and tolerates dead pids", async () => {

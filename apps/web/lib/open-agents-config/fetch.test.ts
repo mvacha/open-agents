@@ -118,6 +118,7 @@ describe("uniquePortsFromConfig", () => {
     const { uniquePortsFromConfig } = await fetchModulePromise;
     expect(
       uniquePortsFromConfig({
+        autostart: true,
         dev: [
           { name: "web", run: "x", port: 5173, cwd: "." },
           { name: "api", run: "y", port: 3001, cwd: "." },
