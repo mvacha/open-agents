@@ -1,6 +1,11 @@
 {
   "version": "1.0.0",
   "steps": {
+    "node_modules/workflow/dist/stdlib.js": {
+      "fetch": {
+        "stepId": "step//workflow@4.2.0-beta.74//fetch"
+      }
+    },
     "app/workflows/sandbox-lifecycle.ts": {
       "clearLifecycleRunIdIfOwned": {
         "stepId": "step//./app/workflows/sandbox-lifecycle//clearLifecycleRunIdIfOwned"
@@ -10,11 +15,6 @@
       },
       "runLifecycleEvaluation": {
         "stepId": "step//./app/workflows/sandbox-lifecycle//runLifecycleEvaluation"
-      }
-    },
-    "node_modules/workflow/dist/stdlib.js": {
-      "fetch": {
-        "stepId": "step//workflow@4.2.0-beta.74//fetch"
       }
     },
     "node_modules/workflow/dist/internal/builtins.js": {

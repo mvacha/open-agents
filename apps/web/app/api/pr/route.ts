@@ -121,6 +121,16 @@ export async function POST(req: Request) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  if (sessionRecord.repoProvider === "azure_devops") {
+    return Response.json(
+      {
+        error:
+          "Manual PR creation via this route is not supported for Azure DevOps sessions. Use auto-PR or open the PR in Azure DevOps.",
+      },
+      { status: 501 },
+    );
+  }
+
   const resolvedBranch = sessionRecord.branch ?? branchName;
 
   if (!resolvedBranch) {

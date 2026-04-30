@@ -1,7 +1,8 @@
 import { discoverSkills } from "@open-harness/agent";
-import { connectSandbox } from "@open-harness/sandbox";
+import type { Sandbox } from "@open-harness/sandbox";
 import { getUserGitHubToken } from "@/lib/github/user-token";
 import { DEFAULT_SANDBOX_PORTS } from "@/lib/sandbox/config";
+import { connectSandboxForSession } from "@/lib/sandbox/connect";
 import {
   getVercelCliSandboxSetup,
   syncVercelCliAuthToSandbox,
@@ -11,7 +12,7 @@ import { getCachedSkills, setCachedSkills } from "@/lib/skills-cache";
 import type { SessionRecord } from "./chat-context";
 
 type DiscoveredSkills = Awaited<ReturnType<typeof discoverSkills>>;
-type ConnectedSandbox = Awaited<ReturnType<typeof connectSandbox>>;
+type ConnectedSandbox = Sandbox;
 type ActiveSandboxState = NonNullable<SessionRecord["sandboxState"]>;
 
 async function loadSessionSkills(
@@ -49,8 +50,17 @@ export async function createChatRuntime(params: {
     throw new Error("Sandbox state is required to create chat runtime");
   }
 
+  // Sandbox credential brokering is GitHub-specific (network policy rewrites
+  // Authorization headers for api.github.com / github.com / etc.). For Azure
+  // DevOps sessions we skip this and rely on the authenticated remote URL
+  // injected by auto-commit-direct via `git remote set-url`.
+  const githubTokenPromise =
+    sessionRecord.repoProvider === "azure_devops"
+      ? Promise.resolve<string | null>(null)
+      : getUserGitHubToken(userId);
+
   const [githubToken, vercelCliSetup] = await Promise.all([
-    getUserGitHubToken(userId),
+    githubTokenPromise,
     getVercelCliSandboxSetup({ userId, sessionRecord }).catch((error) => {
       console.warn(
         `Failed to prepare Vercel CLI setup for session ${sessionId}:`,
@@ -60,7 +70,7 @@ export async function createChatRuntime(params: {
     }),
   ]);
 
-  const sandbox = await connectSandbox(sandboxState, {
+  const sandbox = await connectSandboxForSession(sandboxState, sessionId, {
     githubToken: githubToken ?? undefined,
     ports: DEFAULT_SANDBOX_PORTS,
   });

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
+import type { GitProvider, RepoRef } from "@/lib/git-providers/types";
+
 // ── Spy state ──────────────────────────────────────────────────────
 
 type ExecResult = {
@@ -9,15 +11,27 @@ type ExecResult = {
 };
 
 let execResults: Map<string, ExecResult>;
-let repoTokenResult: { token: string | null } = { token: "ghp_test123" };
+let providerToken: { token: string | null } = { token: "ghp_test123" };
+let providerAuthUrl: string | null =
+  "https://x-access-token:ghp_test123@github.com/acme/repo.git";
 let githubAccountResult: {
   externalUserId: string;
   username: string;
 } | null = { externalUserId: "12345", username: "octocat" };
+let userByIdResult: {
+  id: string;
+  username: string;
+  email: string | null;
+  name: string | null;
+} | null = {
+  id: "user-1",
+  username: "alice",
+  email: "alice@example.com",
+  name: "Alice Example",
+};
 let generateTextResult = { text: "feat: implement new feature" };
 
 const execSpy = mock(async (command: string): Promise<ExecResult> => {
-  // Match on command prefix to support parameterized commands
   for (const [prefix, result] of execResults) {
     if (command.startsWith(prefix) || command.includes(prefix)) {
       return result;
@@ -30,6 +44,9 @@ const sandbox = {
   workingDirectory: "/vercel/sandbox",
   exec: execSpy,
 };
+
+const getCloneTokenSpy = mock(async (_userId?: string) => providerToken.token);
+const buildAuthRemoteUrlSpy = mock(() => providerAuthUrl);
 
 // ── Module mocks ───────────────────────────────────────────────────
 
@@ -45,8 +62,12 @@ mock.module("@/lib/db/accounts", () => ({
   getGitHubAccount: async () => githubAccountResult,
 }));
 
-mock.module("@/lib/github/user-token", () => ({
-  getUserGitHubToken: async () => repoTokenResult.token,
+mock.module("@/lib/db/users", () => ({
+  getUserById: async () => userByIdResult,
+}));
+
+mock.module("@/lib/github/app-auth", () => ({
+  getAppCoAuthorTrailer: async () => null,
 }));
 
 const { performAutoCommit } = await import("./auto-commit-direct");
@@ -74,14 +95,50 @@ function defaultExecResults(): Map<string, ExecResult> {
   ]);
 }
 
-function makeParams() {
+const githubRef: RepoRef = {
+  provider: "github",
+  owner: "acme",
+  repo: "repo",
+};
+
+const adoRef: RepoRef = {
+  provider: "azure_devops",
+  org: "contoso",
+  project: "Acme",
+  repo: "repo",
+};
+
+function makeFakeProvider(
+  id: GitProvider["id"] = "github",
+  overrides: Partial<GitProvider> = {},
+): GitProvider {
+  return {
+    id,
+    validateRepoIdentifiers: () => true,
+    getCloneToken: getCloneTokenSpy,
+    buildAuthRemoteUrl: buildAuthRemoteUrlSpy,
+    getDefaultBranch: async () => "main",
+    findPullRequestByBranch: async () => ({ found: false }),
+    createPullRequest: async () => ({ success: true }),
+    getPullRequestStatus: async () => ({ success: true, status: "open" }),
+    buildPullRequestUrl: () => "https://example.com/pr/1",
+    buildRepoWebUrl: () => "https://example.com/repo",
+    fetchRepoFile: async () => null,
+    ...overrides,
+  };
+}
+
+function makeParams(
+  overrides: Partial<Parameters<typeof performAutoCommit>[0]> = {},
+) {
   return {
     sandbox: sandbox as never,
     userId: "user-1",
     sessionId: "session-1",
     sessionTitle: "Fix bug",
-    repoOwner: "acme",
-    repoName: "repo",
+    provider: makeFakeProvider("github"),
+    ref: githubRef,
+    ...overrides,
   };
 }
 
@@ -89,9 +146,19 @@ function makeParams() {
 
 beforeEach(() => {
   execSpy.mockClear();
+  getCloneTokenSpy.mockClear();
+  buildAuthRemoteUrlSpy.mockClear();
   execResults = defaultExecResults();
-  repoTokenResult = { token: "ghp_test123" };
+  providerToken = { token: "ghp_test123" };
+  providerAuthUrl =
+    "https://x-access-token:ghp_test123@github.com/acme/repo.git";
   githubAccountResult = { externalUserId: "12345", username: "octocat" };
+  userByIdResult = {
+    id: "user-1",
+    username: "alice",
+    email: "alice@example.com",
+    name: "Alice Example",
+  };
   generateTextResult = { text: "feat: implement new feature" };
 });
 
@@ -130,7 +197,7 @@ describe("performAutoCommit", () => {
   });
 
   test("skips auth remote URL when no token", async () => {
-    repoTokenResult = { token: null };
+    providerToken = { token: null };
 
     const result = await performAutoCommit(makeParams());
 
@@ -194,7 +261,7 @@ describe("performAutoCommit", () => {
     expect(result.error).toBeUndefined();
   });
 
-  test("sets git author identity when github account available", async () => {
+  test("sets git author identity for github provider when account available", async () => {
     await performAutoCommit(makeParams());
 
     const nameCall = execSpy.mock.calls.find((c) =>
@@ -212,7 +279,7 @@ describe("performAutoCommit", () => {
     );
   });
 
-  test("skips git identity when no github account", async () => {
+  test("skips git identity for github provider when no github account", async () => {
     githubAccountResult = null;
 
     await performAutoCommit(makeParams());
@@ -221,6 +288,40 @@ describe("performAutoCommit", () => {
       (c[0] as string).includes("git config user.name"),
     );
     expect(nameCall).toBeUndefined();
+  });
+
+  test("sets git author identity from user record for ADO provider", async () => {
+    await performAutoCommit(
+      makeParams({ provider: makeFakeProvider("azure_devops"), ref: adoRef }),
+    );
+
+    const nameCall = execSpy.mock.calls.find((c) =>
+      (c[0] as string).includes("git config user.name"),
+    );
+    const emailCall = execSpy.mock.calls.find((c) =>
+      (c[0] as string).includes("git config user.email"),
+    );
+
+    expect(nameCall![0] as string).toContain("Alice Example");
+    expect(emailCall![0] as string).toContain("alice@example.com");
+  });
+
+  test("falls back to noreply email for ADO when user has no email", async () => {
+    userByIdResult = {
+      id: "user-1",
+      username: "alice",
+      email: null,
+      name: null,
+    };
+
+    await performAutoCommit(
+      makeParams({ provider: makeFakeProvider("azure_devops"), ref: adoRef }),
+    );
+
+    const emailCall = execSpy.mock.calls.find((c) =>
+      (c[0] as string).includes("git config user.email"),
+    );
+    expect(emailCall![0] as string).toContain("alice@users.noreply.invalid");
   });
 
   test("uses fallback commit message when diff is empty", async () => {
@@ -241,13 +342,22 @@ describe("performAutoCommit", () => {
     expect(result.commitMessage!.length).toBeLessThanOrEqual(72);
   });
 
-  test("proceeds without token when no user token is available", async () => {
-    // Override the mock for this test by manipulating exec results
-    // The token fetch will fail but commit should still work
-    repoTokenResult = { token: null };
+  test("uses provider.buildAuthRemoteUrl for ADO sessions", async () => {
+    providerAuthUrl =
+      "https://anything:pat@dev.azure.com/contoso/Acme/_git/repo";
+    providerToken = { token: "pat" };
 
-    const result = await performAutoCommit(makeParams());
+    await performAutoCommit(
+      makeParams({ provider: makeFakeProvider("azure_devops"), ref: adoRef }),
+    );
 
-    expect(result.committed).toBe(true);
+    const setUrlCall = execSpy.mock.calls.find((c) =>
+      (c[0] as string).includes("git remote set-url"),
+    );
+    expect(setUrlCall![0] as string).toContain("dev.azure.com");
+    expect(buildAuthRemoteUrlSpy).toHaveBeenCalledWith({
+      token: "pat",
+      ref: adoRef,
+    });
   });
 });

@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useState,
   useMemo,
   useRef,
@@ -15,11 +16,48 @@ import { useIsMobile } from "@/hooks/use-mobile";
 export type GitPanelTab = "diff" | "pr" | "files";
 export type ActiveView = "chat" | "diff" | "file";
 export type DiffScope = "uncommitted" | "branch";
+export type ActivePanel = "git" | "logs" | null;
+
+const ACTIVE_PANEL_STORAGE_KEY = "open-agents:active-panel";
+
+function isActivePanelValue(value: unknown): value is "git" | "logs" {
+  return value === "git" || value === "logs";
+}
+
+function readInitialActivePanel(): ActivePanel {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(ACTIVE_PANEL_STORAGE_KEY);
+    if (raw === null) {
+      // First visit: default to logs panel open.
+      return "logs";
+    }
+    if (raw === "null") {
+      return null;
+    }
+    if (isActivePanelValue(raw)) {
+      return raw;
+    }
+  } catch {
+    // localStorage unavailable
+  }
+  return null;
+}
 
 type GitPanelContextValue = {
-  /** Whether the right git panel is open */
+  /** Which panel (if any) is currently open. Only one panel may be open at a time. */
+  activePanel: ActivePanel;
+  setActivePanel: (panel: ActivePanel) => void;
+
+  /** Whether the right git panel is open (derived from activePanel) */
   gitPanelOpen: boolean;
   setGitPanelOpen: (open: boolean) => void;
+
+  /** Whether the sandbox logs panel is open (derived from activePanel) */
+  logsPanelOpen: boolean;
+  setLogsPanelOpen: (open: boolean) => void;
 
   /** Active tab within the git panel */
   gitPanelTab: GitPanelTab;
@@ -72,7 +110,7 @@ type GitPanelContextValue = {
   shareRequested: boolean;
   setShareRequested: (requested: boolean) => void;
 
-  /** Ref to the DOM node where the git panel should be portaled into */
+  /** Ref to the DOM node where the active panel should be portaled into */
   panelPortalRef: RefObject<HTMLDivElement | null>;
 
   /** Ref to the DOM node where header action buttons should be portaled into */
@@ -85,7 +123,43 @@ const GitPanelContext = createContext<GitPanelContextValue | undefined>(
 
 export function GitPanelProvider({ children }: { children: ReactNode }) {
   const isMobile = useIsMobile();
-  const [gitPanelOpen, setGitPanelOpen] = useState(false);
+  const [activePanel, setActivePanelState] = useState<ActivePanel>(
+    readInitialActivePanel,
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        ACTIVE_PANEL_STORAGE_KEY,
+        activePanel === null ? "null" : activePanel,
+      );
+    } catch {
+      // ignore quota errors
+    }
+  }, [activePanel]);
+
+  const setActivePanel = useCallback((panel: ActivePanel) => {
+    setActivePanelState(panel);
+  }, []);
+
+  const setGitPanelOpen = useCallback((open: boolean) => {
+    setActivePanelState((prev) => {
+      if (open) return "git";
+      return prev === "git" ? null : prev;
+    });
+  }, []);
+
+  const setLogsPanelOpen = useCallback((open: boolean) => {
+    setActivePanelState((prev) => {
+      if (open) return "logs";
+      return prev === "logs" ? null : prev;
+    });
+  }, []);
+
+  const gitPanelOpen = activePanel === "git";
+  const logsPanelOpen = activePanel === "logs";
+
   const [gitPanelTab, setGitPanelTab] = useState<GitPanelTab>("files");
   const [activeView, setActiveView] = useState<ActiveView>("chat");
   const [focusedDiffFile, setFocusedDiffFile] = useState<string | null>(null);
@@ -107,7 +181,7 @@ export function GitPanelProvider({ children }: { children: ReactNode }) {
       setFocusedDiffRequestId((prev) => prev + 1);
       setActiveView("diff");
       setChangesTabDismissed(false);
-      if (isMobile) setGitPanelOpen(false);
+      if (isMobile) setActivePanelState(null);
     },
     [isMobile],
   );
@@ -117,15 +191,19 @@ export function GitPanelProvider({ children }: { children: ReactNode }) {
       setFocusedFilePath(filePath);
       setActiveView("file");
       setFileTabDismissed(false);
-      if (isMobile) setGitPanelOpen(false);
+      if (isMobile) setActivePanelState(null);
     },
     [isMobile],
   );
 
   const value = useMemo(
     () => ({
+      activePanel,
+      setActivePanel,
       gitPanelOpen,
       setGitPanelOpen,
+      logsPanelOpen,
+      setLogsPanelOpen,
       gitPanelTab,
       setGitPanelTab,
       activeView,
@@ -155,7 +233,12 @@ export function GitPanelProvider({ children }: { children: ReactNode }) {
       headerActionsRef,
     }),
     [
+      activePanel,
+      setActivePanel,
       gitPanelOpen,
+      setGitPanelOpen,
+      logsPanelOpen,
+      setLogsPanelOpen,
       gitPanelTab,
       activeView,
       changesTabDismissed,

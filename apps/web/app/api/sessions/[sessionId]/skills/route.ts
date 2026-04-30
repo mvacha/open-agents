@@ -1,10 +1,10 @@
 import { discoverSkills } from "@open-harness/agent";
-import { connectSandbox } from "@open-harness/sandbox";
 import {
   requireAuthenticatedUser,
   requireOwnedSession,
 } from "@/app/api/sessions/_lib/session-context";
 import { updateSession } from "@/lib/db/sessions";
+import { connectSandboxForSession } from "@/lib/sandbox/connect";
 import { getSandboxSkillDirectories } from "@/lib/skills/directories";
 import { getCachedSkills, setCachedSkills } from "@/lib/skills-cache";
 import { buildHibernatedLifecycleUpdate } from "@/lib/sandbox/lifecycle";
@@ -74,7 +74,7 @@ export async function GET(req: Request, context: RouteContext) {
   }
 
   try {
-    const sandbox = await connectSandbox(sandboxState);
+    const sandbox = await connectSandboxForSession(sandboxState, sessionId);
     const skillDirs = await getSandboxSkillDirectories(sandbox);
 
     const skills = await discoverSkills(sandbox, skillDirs);

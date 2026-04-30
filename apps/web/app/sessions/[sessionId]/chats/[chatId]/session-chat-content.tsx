@@ -110,6 +110,7 @@ import {
   shouldRenderGitDataPart,
   shouldShowThinkingIndicator,
 } from "@/lib/chat-streaming-state";
+import { buildPullRequestUrl } from "@/lib/git-providers/url-builders";
 import { ACCEPT_IMAGE_TYPES, isValidImageType } from "@/lib/image-utils";
 import { isLargeText } from "@/lib/text-attachment-utils";
 import {
@@ -178,6 +179,10 @@ const FileTabView = dynamic(
 const GitPanel = dynamic(() => import("./git-panel").then((m) => m.GitPanel), {
   ssr: false,
 });
+const SandboxLogsPanel = dynamic(
+  () => import("./sandbox-logs-panel").then((m) => m.SandboxLogsPanel),
+  { ssr: false },
+);
 
 const emptySubscribe = () => () => {};
 
@@ -1092,6 +1097,7 @@ export function SessionChatContent({
   const {
     activeView,
     gitPanelOpen,
+    logsPanelOpen,
     shareRequested,
     setShareRequested,
     setHasActionNeeded,
@@ -2856,8 +2862,8 @@ export function SessionChatContent({
     session.vercelProjectId && previewLookupBranch,
   );
   const existingPrUrl =
-    hasExistingPr && session.repoOwner && session.repoName
-      ? `https://github.com/${session.repoOwner}/${session.repoName}/pull/${session.prNumber}`
+    hasExistingPr && session.prNumber
+      ? buildPullRequestUrl(session, session.prNumber)
       : null;
   const prDeploymentQuery = new URLSearchParams(
     Object.entries({
@@ -3110,12 +3116,24 @@ export function SessionChatContent({
     />
   ) : null;
 
+  const sandboxLogsElement = logsPanelOpen ? (
+    <SandboxLogsPanel
+      sessionId={session.id}
+      hasSandbox={sandboxInfo !== null}
+    />
+  ) : null;
+
   return (
     <>
       {/* Git panel portaled to layout-level for full page height */}
       {gitPanelOpen &&
         panelPortalRef.current &&
         createPortal(gitPanelElement, panelPortalRef.current)}
+
+      {/* Sandbox logs panel portaled to layout-level for full page height */}
+      {logsPanelOpen &&
+        panelPortalRef.current &&
+        createPortal(sandboxLogsElement, panelPortalRef.current)}
 
       {/* Header actions portaled from chat-level state */}
       {headerActionsRef.current &&

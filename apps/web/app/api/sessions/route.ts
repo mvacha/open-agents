@@ -1,4 +1,6 @@
 import { nanoid } from "nanoid";
+import { getAzureDevOpsConfig } from "@/lib/azure-devops/config";
+import { isValidAdoIdentifier } from "@/lib/azure-devops/repo-identifiers";
 import {
   countSessionsByUserId,
   createSessionWithInitialChat,
@@ -11,6 +13,15 @@ import {
   upsertVercelProjectLink,
 } from "@/lib/db/vercel-project-links";
 import { getUserPreferences } from "@/lib/db/user-preferences";
+import {
+  isAzureDevOpsEnabled,
+  isGitHubEnabled,
+} from "@/lib/git-providers/feature-flags";
+import {
+  repoMetaSchema,
+  type RepoMeta,
+  type RepoProviderId,
+} from "@/lib/git-providers/types";
 import { sanitizeUserPreferencesForSession } from "@/lib/model-access";
 import {
   isValidGitHubRepoName,
@@ -32,8 +43,10 @@ import {
 
 interface CreateSessionRequest {
   title?: string;
+  repoProvider?: RepoProviderId;
   repoOwner?: string;
   repoName?: string;
+  repoMeta?: unknown;
   branch?: string;
   cloneUrl?: string;
   isNewBranch?: boolean;
@@ -213,22 +226,97 @@ export async function POST(req: Request) {
     );
   }
 
-  if (
-    body.repoOwner !== undefined &&
-    (typeof body.repoOwner !== "string" ||
-      !isValidGitHubRepoOwner(body.repoOwner))
-  ) {
+  const repoProvider: RepoProviderId = body.repoProvider ?? "github";
+  if (repoProvider !== "github" && repoProvider !== "azure_devops") {
+    return Response.json({ error: "Invalid repoProvider" }, { status: 400 });
+  }
+
+  if (repoProvider === "github" && !isGitHubEnabled()) {
     return Response.json(
-      { error: "Invalid repository owner" },
-      { status: 400 },
+      { error: "provider_disabled", provider: "github" },
+      { status: 403 },
+    );
+  }
+  if (repoProvider === "azure_devops" && !isAzureDevOpsEnabled()) {
+    return Response.json(
+      { error: "provider_disabled", provider: "azure_devops" },
+      { status: 403 },
     );
   }
 
-  if (
-    body.repoName !== undefined &&
-    (typeof body.repoName !== "string" || !isValidGitHubRepoName(body.repoName))
-  ) {
-    return Response.json({ error: "Invalid repository name" }, { status: 400 });
+  let repoMeta: RepoMeta | null = null;
+  if (body.repoMeta != null) {
+    const parsed = repoMetaSchema.safeParse(body.repoMeta);
+    if (!parsed.success) {
+      return Response.json({ error: "Invalid repoMeta" }, { status: 400 });
+    }
+    repoMeta = parsed.data;
+  }
+
+  if (repoProvider === "github") {
+    if (
+      body.repoOwner !== undefined &&
+      (typeof body.repoOwner !== "string" ||
+        !isValidGitHubRepoOwner(body.repoOwner))
+    ) {
+      return Response.json(
+        { error: "Invalid repository owner" },
+        { status: 400 },
+      );
+    }
+
+    if (
+      body.repoName !== undefined &&
+      (typeof body.repoName !== "string" ||
+        !isValidGitHubRepoName(body.repoName))
+    ) {
+      return Response.json(
+        { error: "Invalid repository name" },
+        { status: 400 },
+      );
+    }
+  } else if (repoProvider === "azure_devops") {
+    const adoConfig = getAzureDevOpsConfig();
+    if (!adoConfig.enabled) {
+      return Response.json(
+        { error: "provider_disabled", provider: "azure_devops" },
+        { status: 403 },
+      );
+    }
+    if (
+      typeof body.repoOwner !== "string" ||
+      !isValidAdoIdentifier(body.repoOwner) ||
+      body.repoOwner !== adoConfig.org
+    ) {
+      return Response.json(
+        {
+          error:
+            "repoOwner must equal the configured Azure DevOps organization",
+        },
+        { status: 400 },
+      );
+    }
+    if (
+      typeof body.repoName !== "string" ||
+      !isValidAdoIdentifier(body.repoName)
+    ) {
+      return Response.json(
+        { error: "Invalid repository name" },
+        { status: 400 },
+      );
+    }
+    if (!repoMeta || repoMeta.provider !== "azure_devops") {
+      return Response.json(
+        {
+          error:
+            "Azure DevOps sessions require repoMeta with provider azure_devops and a project",
+        },
+        { status: 400 },
+      );
+    }
+    if (!isValidAdoIdentifier(repoMeta.project)) {
+      return Response.json({ error: "Invalid project name" }, { status: 400 });
+    }
   }
 
   let explicitVercelProject: VercelProjectSelection | null | undefined;
@@ -334,6 +422,8 @@ export async function POST(req: Request) {
         status: "running",
         repoOwner,
         repoName,
+        repoProvider,
+        repoMeta,
         branch: finalBranch,
         cloneUrl,
         vercelProjectId: resolvedVercelProject?.projectId ?? null,

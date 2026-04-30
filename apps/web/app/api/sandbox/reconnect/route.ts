@@ -1,10 +1,11 @@
-import { connectSandbox, type SandboxState } from "@open-harness/sandbox";
+import type { SandboxState } from "@open-harness/sandbox";
 import {
   requireAuthenticatedUser,
   requireOwnedSession,
   type SessionRecord,
 } from "@/app/api/sessions/_lib/session-context";
 import { updateSession } from "@/lib/db/sessions";
+import { connectSandboxForSession } from "@/lib/sandbox/connect";
 import {
   buildHibernatedLifecycleUpdate,
   getSandboxExpiresAtDate,
@@ -108,7 +109,10 @@ export async function GET(req: Request): Promise<Response> {
 
   // Connect and probe the persisted runtime sandbox state.
   try {
-    const sandbox = await connectSandbox(state as SandboxState);
+    const sandbox = await connectSandboxForSession(
+      state as SandboxState,
+      sessionId,
+    );
     const probe = await sandbox.exec("pwd", sandbox.workingDirectory, 15_000);
     if (!probe.success) {
       const probeError =

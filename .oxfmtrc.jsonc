@@ -5,6 +5,7 @@
   "ignorePatterns": [
     ".agents/skills/**",
     "apps/web/components/ui/**",
+    "apps/web/public/.well-known/workflow/**",
     "**/*.md",
   ],
   "arrowParens": "always",

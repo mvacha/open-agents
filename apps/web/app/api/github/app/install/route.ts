@@ -3,6 +3,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getGitHubAccount } from "@/lib/db/accounts";
 import { getInstallationsByUserId } from "@/lib/db/installations";
 import { decrypt } from "@/lib/crypto";
+import {
+  gitHubDisabledResponse,
+  isGitHubEnabled,
+} from "@/lib/git-providers/feature-flags";
 import { syncUserInstallations } from "@/lib/github/installations-sync";
 import { getServerSession } from "@/lib/session/get-server-session";
 
@@ -54,6 +58,10 @@ function redirectWithInstallCookies(
 }
 
 export async function GET(req: NextRequest): Promise<Response> {
+  if (!isGitHubEnabled()) {
+    return gitHubDisabledResponse();
+  }
+
   const session = await getServerSession();
 
   const redirectTo = sanitizeRedirectTo(req.nextUrl.searchParams.get("next"));

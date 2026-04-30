@@ -1,18 +1,18 @@
 import type { Sandbox } from "@open-harness/sandbox";
-import { generateText } from "ai";
 import { gateway } from "@open-harness/agent";
+import { generateText } from "ai";
 import { getGitHubAccount } from "@/lib/db/accounts";
-import { buildGitHubAuthRemoteUrl } from "@/lib/github/repo-identifiers";
+import { getUserById } from "@/lib/db/users";
 import { getAppCoAuthorTrailer } from "@/lib/github/app-auth";
-import { getUserGitHubToken } from "@/lib/github/user-token";
+import type { GitProvider, RepoRef } from "@/lib/git-providers/types";
 
 export interface AutoCommitParams {
   sandbox: Sandbox;
   userId: string;
   sessionId: string;
   sessionTitle: string;
-  repoOwner: string;
-  repoName: string;
+  provider: GitProvider;
+  ref: RepoRef;
 }
 
 export interface AutoCommitResult {
@@ -23,6 +23,49 @@ export interface AutoCommitResult {
   error?: string;
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+async function configureGitAuthor(
+  sandbox: Sandbox,
+  cwd: string,
+  userId: string,
+  ref: RepoRef,
+): Promise<void> {
+  if (ref.provider === "github") {
+    const githubAccount = await getGitHubAccount(userId);
+    if (githubAccount?.externalUserId && githubAccount.username) {
+      const userEmail = `${githubAccount.externalUserId}+${githubAccount.username}@users.noreply.github.com`;
+      await sandbox.exec(
+        `git config user.name ${shellQuote(githubAccount.username)}`,
+        cwd,
+        5000,
+      );
+      await sandbox.exec(
+        `git config user.email ${shellQuote(userEmail)}`,
+        cwd,
+        5000,
+      );
+    }
+    return;
+  }
+
+  const user = await getUserById(userId);
+  if (user?.username) {
+    const displayName = user.name?.trim() || user.username;
+    const email = user.email?.trim()
+      ? user.email
+      : `${user.username}@users.noreply.invalid`;
+    await sandbox.exec(
+      `git config user.name ${shellQuote(displayName)}`,
+      cwd,
+      5000,
+    );
+    await sandbox.exec(`git config user.email ${shellQuote(email)}`, cwd, 5000);
+  }
+}
+
 /**
  * Performs an auto-commit directly using the sandbox.
  * Stages all changes, generates a commit message, commits, and pushes.
@@ -30,7 +73,7 @@ export interface AutoCommitResult {
 export async function performAutoCommit(
   params: AutoCommitParams,
 ): Promise<AutoCommitResult> {
-  const { sandbox, userId, sessionTitle, repoOwner, repoName } = params;
+  const { sandbox, userId, sessionTitle, provider, ref } = params;
   const cwd = sandbox.workingDirectory;
 
   // 1. Check for uncommitted changes
@@ -40,14 +83,10 @@ export async function performAutoCommit(
   }
 
   // 2. Set up auth on the remote
-  const repoToken = await getUserGitHubToken(userId);
+  const repoToken = await provider.getCloneToken(userId);
 
   if (repoToken) {
-    const authUrl = buildGitHubAuthRemoteUrl({
-      token: repoToken,
-      owner: repoOwner,
-      repo: repoName,
-    });
+    const authUrl = provider.buildAuthRemoteUrl({ token: repoToken, ref });
 
     if (authUrl) {
       await sandbox.exec(`git remote set-url origin "${authUrl}"`, cwd, 10000);
@@ -67,17 +106,8 @@ export async function performAutoCommit(
   // 4. Generate commit message
   const commitMessage = await generateCommitMessage(sandbox, cwd, sessionTitle);
 
-  // 5. Set git author identity
-  const githubAccount = await getGitHubAccount(userId);
-  if (githubAccount?.externalUserId && githubAccount.username) {
-    const userEmail = `${githubAccount.externalUserId}+${githubAccount.username}@users.noreply.github.com`;
-    await sandbox.exec(
-      `git config user.name '${githubAccount.username.replace(/'/g, "'\\''")}'`,
-      cwd,
-      5000,
-    );
-    await sandbox.exec(`git config user.email '${userEmail}'`, cwd, 5000);
-  }
+  // 5. Set git author identity (provider-aware)
+  await configureGitAuthor(sandbox, cwd, userId, ref);
 
   // 6. Commit with Co-Authored-By trailer for the agent app
   const escapedMessage = commitMessage.replace(/'/g, "'\\''");

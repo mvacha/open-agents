@@ -104,7 +104,9 @@ export async function GET(req: Request, context: RouteContext) {
   if (
     !sessionRecord.repoOwner ||
     !sessionRecord.repoName ||
-    sessionRecord.prNumber === null
+    sessionRecord.prNumber === null ||
+    // PR-comment-based Vercel deployment lookup is GitHub-specific.
+    sessionRecord.repoProvider === "azure_devops"
   ) {
     return Response.json({
       deploymentUrl: null,

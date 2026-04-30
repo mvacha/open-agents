@@ -47,6 +47,10 @@ import { useSession } from "@/hooks/use-session";
 import type { SessionWithUnread } from "@/hooks/use-sessions";
 import type { Session as AuthSession } from "@/lib/session/types";
 import { formatRelativeTime } from "@/lib/format-relative-time";
+import {
+  buildBranchUrl,
+  buildPullRequestUrl,
+} from "@/lib/git-providers/url-builders";
 import { getUsageLeaderboardDomain } from "@/lib/usage/leaderboard-domain";
 
 type InboxSidebarProps = {
@@ -197,7 +201,7 @@ function getSessionStatusLabel(session: SessionWithUnread): {
 }
 
 function getSessionBranchUrl(session: SessionWithUnread): string | null {
-  // Only link if the branch is known to exist on GitHub (has a PR).
+  // Only link if the branch is known to exist on the remote (has a PR).
   // Local-only branches that haven't been pushed would 404.
   if (
     !session.branch ||
@@ -206,12 +210,12 @@ function getSessionBranchUrl(session: SessionWithUnread): string | null {
     !session.prNumber
   )
     return null;
-  return `https://github.com/${session.repoOwner}/${session.repoName}/tree/${session.branch}`;
+  return buildBranchUrl(session, session.branch);
 }
 
 function getSessionPrUrl(session: SessionWithUnread): string | null {
-  if (!session.prNumber || !session.repoOwner || !session.repoName) return null;
-  return `https://github.com/${session.repoOwner}/${session.repoName}/pull/${session.prNumber}`;
+  if (!session.prNumber) return null;
+  return buildPullRequestUrl(session, session.prNumber);
 }
 
 function SessionPopoverContent({ session }: { session: SessionWithUnread }) {
@@ -492,8 +496,10 @@ const SessionRow = memo(function SessionRow({
       </span>
     </div>
   ) : (
-    <button
-      type="button"
+    <div
+      // eslint-disable-next-line jsx-a11y/prefer-tag-over-role -- row contains nested action <button>s (rename, archive); using <button> would produce invalid button-in-button HTML
+      role="button"
+      tabIndex={0}
       className={`group relative flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left outline-none transition-[background-color,opacity] cursor-pointer ${
         isActive ? "bg-sidebar-active" : "hover:bg-muted/50"
       } ${isPending ? "opacity-80" : "opacity-100"}`}
@@ -502,6 +508,12 @@ const SessionRow = memo(function SessionRow({
       onMouseLeave={handleMouseLeave}
       onClick={() => onSessionClick(session)}
       onFocus={() => onSessionPrefetch(session)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSessionClick(session);
+        }
+      }}
       aria-busy={isPending}
     >
       <span className="flex h-5 w-5 shrink-0 items-center justify-center">
@@ -583,7 +595,7 @@ const SessionRow = memo(function SessionRow({
           />
         ) : null}
       </span>
-    </button>
+    </div>
   );
 
   if (isMobile || isRenaming) {

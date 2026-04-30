@@ -87,6 +87,32 @@ NEXT_PUBLIC_GITHUB_APP_SLUG=
 GITHUB_WEBHOOK_SECRET=
 ```
 
+To disable GitHub for a deployment (e.g. an Azure-DevOps-only build), set:
+
+```env
+GITHUB_ENABLED=false
+```
+
+This hides GitHub from the agent-creation provider picker and makes the GitHub API routes return 403 `provider_disabled`. Existing GitHub-backed sessions continue to work; the webhook keeps accepting events.
+
+### Azure DevOps (single-tenant, env-configured)
+
+Azure DevOps support is configured per-deployment via environment variables. There is no per-user PAT storage — the deployment owner provides one PAT scoped to the customer's organization.
+
+```env
+AZURE_DEVOPS_ENABLED=true
+AZURE_DEVOPS_ORG=<org-slug>           # e.g. "contoso" from dev.azure.com/contoso
+AZURE_DEVOPS_PAT=<personal-access-token>
+```
+
+Required PAT scopes: **Code (read & write)** and **Code (status)**. The PAT is read at request time, never persisted, never returned to the client.
+
+Notes:
+- All Azure DevOps repos accessible to the PAT are visible to all logged-in users (single-tenant assumption).
+- Azure DevOps PRs are created and pushed as the PAT owner; commit author is the app user.
+- Merging pull requests from this app is not supported in v1 — open the PR in Azure DevOps to merge.
+- Webhooks (Service Hooks) are not configured in v1; PR status is updated via polling.
+
 ### Optional
 
 ```env

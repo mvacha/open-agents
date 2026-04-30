@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
+mock.module("server-only", () => ({}));
+
 const DEV_SERVER_PID_FILE =
   "/vercel/sandbox/apps/web/.open-harness-dev-server-3000.pid";
 const DEV_SERVER_STATE_FILE =
@@ -12,6 +14,11 @@ const currentSessionRecord = {
     type: "vercel" as const,
     sandboxId: "sandbox-1",
     expiresAt: Date.now() + 60_000,
+  } as {
+    type: "vercel";
+    sandboxId: string;
+    expiresAt: number;
+    ports?: number[];
   },
 };
 
@@ -29,6 +36,12 @@ let runningPids = new Set<string>();
 let lastLaunchCommand: string | null = null;
 let lastLaunchCwd: string | null = null;
 let currentMtimeMs = 1_000;
+let configSetupCommands = new Map<
+  string,
+  () => ReturnType<typeof successResult>
+>();
+let detachedLaunches: { command: string; cwd: string }[] = [];
+let detachedFailures = new Map<number, string>();
 
 function successResult(stdout = "") {
   return {
@@ -146,6 +159,13 @@ const execMock = mock(async (command: string) => {
     return successResult();
   }
 
+  if (configSetupCommands.has(command)) {
+    const handler = configSetupCommands.get(command);
+    if (handler) {
+      return handler();
+    }
+  }
+
   throw new Error(`Unexpected exec command: ${command}`);
 });
 const readFileMock = mock(async (filePath: string) => {
@@ -179,6 +199,22 @@ const accessMock = mock(async (filePath: string) => {
 const execDetachedMock = mock(async (command: string, cwd: string) => {
   lastLaunchCommand = command;
   lastLaunchCwd = cwd;
+  detachedLaunches.push({ command, cwd });
+
+  const failureMessage = detachedFailures.get(detachedLaunches.length);
+  if (failureMessage !== undefined) {
+    throw new Error(failureMessage);
+  }
+
+  const declaredPidPath = command.match(
+    /> '([^']+\.open-agents\/.pids\/[a-z0-9-]+\.pid)'/i,
+  )?.[1];
+  if (declaredPidPath) {
+    const pid = `${10000 + detachedLaunches.length}`;
+    setMockFile(declaredPidPath, pid);
+    runningPids.add(pid);
+    return { commandId: `cmd-${detachedLaunches.length}` };
+  }
 
   const pidFilePath = command.match(
     /> '([^']+\.open-harness-dev-server-[0-9]+\.pid)'/,
@@ -190,6 +226,32 @@ const execDetachedMock = mock(async (command: string, cwd: string) => {
 
   return { commandId: "cmd-1" };
 });
+const mkdirMock = mock(async (dirPath: string) => {
+  setMockDirectory(dirPath);
+});
+const readdirMock = mock(async (dirPath: string) => {
+  const entry = pathEntries.get(dirPath);
+  if (!entry || entry.type !== "directory") {
+    throw new Error(`ENOENT: ${dirPath}`);
+  }
+  const prefix = `${dirPath.replace(/\/$/, "")}/`;
+  const names = [...existingPaths]
+    .filter(
+      (p) => p.startsWith(prefix) && !p.slice(prefix.length).includes("/"),
+    )
+    .map((p) => p.slice(prefix.length))
+    .filter((name) => name.length > 0);
+  return names.map((name) => {
+    const child = pathEntries.get(`${prefix}${name}`);
+    const isDir = child?.type === "directory";
+    return {
+      name,
+      isFile: () => !isDir,
+      isDirectory: () => isDir,
+      isSymbolicLink: () => false,
+    };
+  });
+});
 const domainMock = mock((port: number) => `https://sb-${port}.vercel.run`);
 const connectSandboxMock = mock(async () => ({
   workingDirectory: "/vercel/sandbox",
@@ -199,6 +261,8 @@ const connectSandboxMock = mock(async () => ({
   stat: statMock,
   access: accessMock,
   execDetached: execDetachedMock,
+  mkdir: mkdirMock,
+  readdir: readdirMock,
   domain: domainMock,
 }));
 
@@ -229,7 +293,11 @@ describe("/api/sessions/[sessionId]/dev-server", () => {
     runningPids = new Set<string>();
     lastLaunchCommand = null;
     lastLaunchCwd = null;
+    detachedLaunches = [];
+    detachedFailures = new Map();
+    configSetupCommands = new Map();
     currentSessionRecord.sandboxState.expiresAt = Date.now() + 60_000;
+    currentSessionRecord.sandboxState.ports = undefined;
     requireAuthenticatedUserMock.mockClear();
     requireOwnedSessionWithSandboxGuardMock.mockClear();
     connectSandboxMock.mockClear();
@@ -239,6 +307,8 @@ describe("/api/sessions/[sessionId]/dev-server", () => {
     statMock.mockClear();
     accessMock.mockClear();
     execDetachedMock.mockClear();
+    mkdirMock.mockClear();
+    readdirMock.mockClear();
     domainMock.mockClear();
   });
 
@@ -252,6 +322,7 @@ describe("/api/sessions/[sessionId]/dev-server", () => {
       createRouteContext(),
     );
     const body = (await response.json()) as {
+      mode: string;
       packagePath: string;
       port: number;
       url: string;
@@ -259,13 +330,14 @@ describe("/api/sessions/[sessionId]/dev-server", () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({
+      mode: "heuristic",
       packagePath: "apps/web",
       port: 3000,
       url: "https://sb-3000.vercel.run",
     });
     expect(connectSandboxMock).toHaveBeenCalledWith(
       currentSessionRecord.sandboxState,
-      { ports: [3000, 5173, 4321, 8000] },
+      expect.objectContaining({ ports: [3000, 5173, 4321, 8000] }),
     );
     expect(execDetachedMock).toHaveBeenCalledTimes(1);
     expect(lastLaunchCwd).toBe("/vercel/sandbox/apps/web");
@@ -304,6 +376,7 @@ describe("/api/sessions/[sessionId]/dev-server", () => {
       createRouteContext(),
     );
     const body = (await response.json()) as {
+      mode: string;
       packagePath: string;
       port: number;
       url: string;
@@ -311,6 +384,7 @@ describe("/api/sessions/[sessionId]/dev-server", () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({
+      mode: "heuristic",
       packagePath: "apps/web",
       port: 3000,
       url: "https://sb-3000.vercel.run",
@@ -351,6 +425,7 @@ describe("/api/sessions/[sessionId]/dev-server", () => {
       createRouteContext(),
     );
     const body = (await response.json()) as {
+      mode: string;
       packagePath: string;
       port: number;
       url: string;
@@ -358,6 +433,7 @@ describe("/api/sessions/[sessionId]/dev-server", () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({
+      mode: "heuristic",
       packagePath: "apps/web",
       port: 3000,
       url: "https://sb-3000.vercel.run",
@@ -398,6 +474,7 @@ describe("/api/sessions/[sessionId]/dev-server", () => {
       createRouteContext(),
     );
     const body = (await response.json()) as {
+      mode: string;
       stopped: boolean;
       packagePath: string;
       port: number;
@@ -405,6 +482,7 @@ describe("/api/sessions/[sessionId]/dev-server", () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({
+      mode: "heuristic",
       stopped: true,
       packagePath: "apps/web",
       port: 3000,
@@ -501,5 +579,274 @@ describe("/api/sessions/[sessionId]/dev-server", () => {
       "No supported dev script found in package.json files",
     );
     expect(execDetachedMock).toHaveBeenCalledTimes(0);
+  });
+
+  describe("declared path", () => {
+    function seedDeclaredConfig(config: unknown) {
+      setMockDirectory("/vercel/sandbox/.open-agents");
+      setMockFile(
+        "/vercel/sandbox/.open-agents/config.json",
+        JSON.stringify(config),
+      );
+    }
+
+    test("launches a single declared process and exposes a url for it", async () => {
+      const { POST } = await routeModulePromise;
+      seedDeclaredConfig({
+        dev: [{ name: "web", run: "bun run dev", port: 5173, cwd: "apps/web" }],
+      });
+
+      const response = await POST(
+        new Request("http://localhost/api/sessions/session-1/dev-server", {
+          method: "POST",
+        }),
+        createRouteContext(),
+      );
+      const body = (await response.json()) as {
+        mode: string;
+        processes: Array<{
+          name: string;
+          cwd: string;
+          url?: string;
+          port: number;
+        }>;
+      };
+
+      expect(response.status).toBe(200);
+      expect(body).toEqual({
+        mode: "declared",
+        processes: [
+          {
+            name: "web",
+            cwd: "apps/web",
+            port: 5173,
+            url: "https://sb-5173.vercel.run",
+          },
+        ],
+      });
+      expect(detachedLaunches).toHaveLength(1);
+      expect(detachedLaunches[0]?.cwd).toBe("/vercel/sandbox/apps/web");
+      expect(detachedLaunches[0]?.command).toContain(
+        "/vercel/sandbox/.open-agents/.pids/web.pid",
+      );
+      expect(
+        existingPaths.has("/vercel/sandbox/.open-agents/.pids/web.pid"),
+      ).toBe(true);
+    });
+
+    test("launches N processes sequentially and only the first gets a url", async () => {
+      const { POST } = await routeModulePromise;
+      currentSessionRecord.sandboxState.ports = [5173, 3001];
+      seedDeclaredConfig({
+        dev: [
+          { name: "web", run: "bun run dev", port: 5173, cwd: "apps/web" },
+          { name: "api", run: "bun run api", port: 3001, cwd: "apps/api" },
+        ],
+      });
+
+      const response = await POST(
+        new Request("http://localhost/api/sessions/session-1/dev-server", {
+          method: "POST",
+        }),
+        createRouteContext(),
+      );
+      const body = (await response.json()) as {
+        mode: string;
+        processes: Array<{ name: string; url?: string; port: number }>;
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.mode).toBe("declared");
+      expect(body.processes).toHaveLength(2);
+      expect(body.processes[0]?.url).toBe("https://sb-5173.vercel.run");
+      expect(body.processes[1]?.url).toBeUndefined();
+      expect(detachedLaunches.map((l) => l.command).join("\n")).toMatch(
+        /web\.pid[\s\S]*api\.pid/,
+      );
+    });
+
+    test("rolls back launched siblings when a later process fails", async () => {
+      const { POST } = await routeModulePromise;
+      currentSessionRecord.sandboxState.ports = [5173, 3001, 4000];
+      seedDeclaredConfig({
+        dev: [
+          { name: "web", run: "bun run dev", port: 5173, cwd: "apps/web" },
+          { name: "api", run: "bun run api", port: 3001, cwd: "apps/api" },
+          { name: "worker", run: "bun run wk", port: 4000, cwd: "." },
+        ],
+      });
+      detachedFailures.set(
+        2,
+        "Background command exited with code 127. stderr:\nbun: command not found",
+      );
+
+      const response = await POST(
+        new Request("http://localhost/api/sessions/session-1/dev-server", {
+          method: "POST",
+        }),
+        createRouteContext(),
+      );
+      const body = (await response.json()) as {
+        error: string;
+        failed: { name: string; exitCode: number | null };
+      };
+
+      expect(response.status).toBe(500);
+      expect(body.error).toContain('"api"');
+      expect(body.failed.name).toBe("api");
+      expect(body.failed.exitCode).toBe(127);
+      expect(detachedLaunches).toHaveLength(2);
+      expect(
+        existingPaths.has("/vercel/sandbox/.open-agents/.pids/web.pid"),
+      ).toBe(false);
+    });
+
+    test("returns 422 when config.json is invalid", async () => {
+      const { POST } = await routeModulePromise;
+      seedDeclaredConfig({ dev: [] });
+
+      const response = await POST(
+        new Request("http://localhost/api/sessions/session-1/dev-server", {
+          method: "POST",
+        }),
+        createRouteContext(),
+      );
+      const body = (await response.json()) as {
+        error: string;
+        details: string;
+      };
+
+      expect(response.status).toBe(422);
+      expect(body.error).toContain("invalid");
+      expect(body.details.length).toBeGreaterThan(0);
+    });
+
+    test("returns 409 when declared ports are not exposed by the sandbox", async () => {
+      const { POST } = await routeModulePromise;
+      seedDeclaredConfig({
+        dev: [{ name: "web", run: "bun run dev", port: 9000, cwd: "apps/web" }],
+      });
+
+      const response = await POST(
+        new Request("http://localhost/api/sessions/session-1/dev-server", {
+          method: "POST",
+        }),
+        createRouteContext(),
+      );
+      const body = (await response.json()) as {
+        error: string;
+        expected: number[];
+        actual: number[];
+      };
+
+      expect(response.status).toBe(409);
+      expect(body.expected).toEqual([9000]);
+      expect(body.actual).toEqual([3000, 5173, 4321, 8000]);
+    });
+
+    test("setup commands run on first launch and are skipped on second", async () => {
+      const { POST } = await routeModulePromise;
+      seedDeclaredConfig({
+        setup: ["echo setup"],
+        dev: [{ name: "web", run: "bun run dev", port: 5173, cwd: "apps/web" }],
+      });
+
+      let setupRunCount = 0;
+      configSetupCommands.set("echo setup", () => {
+        setupRunCount += 1;
+        return successResult();
+      });
+
+      const first = await POST(
+        new Request("http://localhost/api/sessions/session-1/dev-server", {
+          method: "POST",
+        }),
+        createRouteContext(),
+      );
+      expect(first.status).toBe(200);
+      expect(setupRunCount).toBe(1);
+
+      const second = await POST(
+        new Request("http://localhost/api/sessions/session-1/dev-server", {
+          method: "POST",
+        }),
+        createRouteContext(),
+      );
+      expect(second.status).toBe(200);
+      expect(setupRunCount).toBe(1);
+    });
+
+    test("setup failure aborts the launch and does not write the marker", async () => {
+      const { POST } = await routeModulePromise;
+      seedDeclaredConfig({
+        setup: ["bun install"],
+        dev: [{ name: "web", run: "bun run dev", port: 5173, cwd: "apps/web" }],
+      });
+      configSetupCommands.set("bun install", () =>
+        failureResult("bun: command not found"),
+      );
+
+      const response = await POST(
+        new Request("http://localhost/api/sessions/session-1/dev-server", {
+          method: "POST",
+        }),
+        createRouteContext(),
+      );
+      const body = (await response.json()) as {
+        error: string;
+        failed: { command: string; stderr: string };
+      };
+
+      expect(response.status).toBe(500);
+      expect(body.error).toBe("Setup failed");
+      expect(body.failed.command).toBe("bun install");
+      expect(detachedLaunches).toHaveLength(0);
+      expect(
+        existingPaths.has("/vercel/sandbox/.open-agents/.setup-done"),
+      ).toBe(false);
+    });
+
+    test("DELETE stops all .pid files and tolerates dead pids", async () => {
+      const { DELETE, POST } = await routeModulePromise;
+      currentSessionRecord.sandboxState.ports = [5173, 3001];
+      seedDeclaredConfig({
+        dev: [
+          { name: "web", run: "bun run dev", port: 5173, cwd: "apps/web" },
+          { name: "api", run: "bun run api", port: 3001, cwd: "apps/api" },
+        ],
+      });
+
+      const launch = await POST(
+        new Request("http://localhost/api/sessions/session-1/dev-server", {
+          method: "POST",
+        }),
+        createRouteContext(),
+      );
+      expect(launch.status).toBe(200);
+
+      // Force one of the pids to look dead.
+      runningPids.delete("10001");
+
+      const response = await DELETE(
+        new Request("http://localhost/api/sessions/session-1/dev-server", {
+          method: "DELETE",
+        }),
+        createRouteContext(),
+      );
+      const body = (await response.json()) as {
+        mode: string;
+        stopped: { name: string; pid: string | null }[];
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.mode).toBe("declared");
+      expect(body.stopped.map((s) => s.name).sort()).toEqual(["api", "web"]);
+      expect(
+        existingPaths.has("/vercel/sandbox/.open-agents/.pids/web.pid"),
+      ).toBe(false);
+      expect(
+        existingPaths.has("/vercel/sandbox/.open-agents/.pids/api.pid"),
+      ).toBe(false);
+    });
   });
 });

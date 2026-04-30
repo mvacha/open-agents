@@ -1,8 +1,8 @@
 import { checkBotId } from "botid/server";
 import { botIdConfig } from "@/lib/botid";
-import { connectSandbox } from "@open-harness/sandbox";
 import { gateway, generateText } from "ai";
 import { getSessionById } from "@/lib/db/sessions";
+import { connectSandboxForSession } from "@/lib/sandbox/connect";
 import { isSandboxActive } from "@/lib/sandbox/utils";
 import { getServerSession } from "@/lib/session/get-server-session";
 
@@ -32,7 +32,10 @@ export async function POST(
     return Response.json({ error: "No active sandbox" }, { status: 400 });
   }
 
-  const sandbox = await connectSandbox(dbSession.sandboxState);
+  const sandbox = await connectSandboxForSession(
+    dbSession.sandboxState,
+    sessionId,
+  );
   const cwd = sandbox.workingDirectory;
 
   // Get the diff for commit message generation

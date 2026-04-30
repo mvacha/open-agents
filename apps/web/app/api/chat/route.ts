@@ -253,6 +253,8 @@ export async function POST(req: Request) {
           sessionTitle: sessionRecord.title,
           repoOwner: sessionRecord.repoOwner,
           repoName: sessionRecord.repoName,
+          repoProvider: sessionRecord.repoProvider,
+          repoMeta: sessionRecord.repoMeta,
         }),
     },
   ]);

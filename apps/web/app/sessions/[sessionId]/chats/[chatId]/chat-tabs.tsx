@@ -404,7 +404,7 @@ export function ChatTabs({ activeChatId }: ChatTabsProps) {
 
   return (
     <>
-      <div className="flex items-center gap-0 border-b border-border bg-muted/30 px-1">
+      <div className="flex items-center gap-0 border-b border-border bg-muted/30 px-1 h-10">
         <div
           ref={scrollContainerRef}
           className="flex min-w-0 flex-1 items-center overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"

@@ -118,7 +118,6 @@ export class VercelSandbox implements Sandbox {
   /** Current runtime session identifier. */
   readonly id: string;
   readonly workingDirectory: string;
-  readonly env?: Record<string, string>;
   /**
    * The current git branch in the sandbox.
    * Set when a newBranch is created, or when cloning from a specific branch.
@@ -157,7 +156,6 @@ export class VercelSandbox implements Sandbox {
     name: string,
     id: string,
     workingDirectory: string,
-    env?: Record<string, string>,
     currentBranch?: string,
     hooks?: SandboxHooks,
     timeout?: number,
@@ -169,7 +167,6 @@ export class VercelSandbox implements Sandbox {
     this.name = name;
     this.id = id;
     this.workingDirectory = workingDirectory;
-    this.env = env;
     this.currentBranch = currentBranch;
     this.hooks = hooks;
     this._ports = ports;
@@ -424,14 +421,9 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
 
   private getCommandEnv(): Record<string, string> | undefined {
     const runtimePreviewEnv = this.getRuntimePreviewEnv();
-    if (!this.env && Object.keys(runtimePreviewEnv).length === 0) {
-      return undefined;
-    }
-
-    return {
-      ...this.env,
-      ...runtimePreviewEnv,
-    };
+    return Object.keys(runtimePreviewEnv).length > 0
+      ? runtimePreviewEnv
+      : undefined;
   }
 
   /**
@@ -482,6 +474,10 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
       networkPolicy: buildGitHubCredentialBrokeringPolicy(githubToken),
       ...(ports && { ports }),
       ...(snapshotExpiration !== undefined && { snapshotExpiration }),
+      // env is forwarded to Sandbox.create so the Vercel server stores it as
+      // sandbox-level defaults; subsequent reconnects (Sandbox.get) inherit
+      // them automatically and per-command env (preview URLs) merges on top.
+      ...(env && Object.keys(env).length > 0 ? { env } : {}),
     };
 
     let sdk: VercelSandboxSDK;
@@ -634,7 +630,6 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
       sdk.name,
       session.sessionId,
       workingDirectory,
-      env,
       currentBranch,
       hooks,
       effectiveTimeout,
@@ -656,7 +651,6 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
   static async connect(
     sandboxName: string,
     options: {
-      env?: Record<string, string>;
       githubToken?: string;
       hooks?: SandboxHooks;
       /**
@@ -694,7 +688,6 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
       sandboxName,
       session.sessionId,
       DEFAULT_WORKING_DIRECTORY,
-      options.env,
       undefined,
       options.hooks,
       remainingTimeout,
@@ -748,7 +741,6 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
     const result = await this.session.runCommand({
       cmd: "stat",
       args: ["-c", "%F\t%s\t%Y", path],
-      env: this.env,
     });
 
     if (result.exitCode !== 0) {
@@ -774,7 +766,6 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
     const result = await this.session.runCommand({
       cmd: "test",
       args: ["-e", path],
-      env: this.env,
     });
 
     if (result.exitCode !== 0) {
@@ -787,7 +778,6 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
     const result = await this.session.runCommand({
       cmd: "mkdir",
       args,
-      env: this.env,
     });
 
     if (result.exitCode !== 0) {
@@ -806,7 +796,6 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
     const result = await this.session.runCommand({
       cmd: "bash",
       args: ["-c", `find "${path}" -maxdepth 1 -mindepth 1 -printf "%y %f\\n"`],
-      env: this.env,
     });
 
     if (result.exitCode !== 0) {
@@ -870,6 +859,14 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
         truncated = true;
       }
 
+      this.hooks?.onLog?.({
+        sandboxId: this.id,
+        command,
+        exitCode: result.exitCode,
+        stdout,
+        timestamp: Date.now(),
+      });
+
       return {
         success: result.exitCode === 0,
         exitCode: result.exitCode,
@@ -879,24 +876,47 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
       };
     } catch (error) {
       if (error instanceof Error && error.name === "TimeoutError") {
+        const stderr = `Command timed out after ${timeoutMs}ms`;
+        this.hooks?.onLog?.({
+          sandboxId: this.id,
+          command,
+          exitCode: null,
+          stderr,
+          timestamp: Date.now(),
+        });
         return {
           success: false,
           exitCode: null,
           stdout: "",
-          stderr: `Command timed out after ${timeoutMs}ms`,
+          stderr,
           truncated: false,
         };
       }
 
       if (error instanceof Error && error.name === "AbortError") {
+        this.hooks?.onLog?.({
+          sandboxId: this.id,
+          command,
+          exitCode: null,
+          stderr: "aborted",
+          timestamp: Date.now(),
+        });
         throw error;
       }
 
+      const stderr = error instanceof Error ? error.message : String(error);
+      this.hooks?.onLog?.({
+        sandboxId: this.id,
+        command,
+        exitCode: null,
+        stderr,
+        timestamp: Date.now(),
+      });
       return {
         success: false,
         exitCode: null,
         stdout: "",
-        stderr: error instanceof Error ? error.message : String(error),
+        stderr,
         truncated: false,
       };
     }
@@ -938,16 +958,43 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
     }
 
     if (quickProbe.kind === "timeout") {
+      this.hooks?.onLog?.({
+        sandboxId: this.id,
+        command,
+        exitCode: null,
+        timestamp: Date.now(),
+      });
       return { commandId: result.cmdId };
     }
 
     if (quickProbe.kind === "error") {
+      this.hooks?.onLog?.({
+        sandboxId: this.id,
+        command,
+        exitCode: null,
+        stderr:
+          quickProbe.error instanceof Error
+            ? quickProbe.error.message
+            : String(quickProbe.error),
+        timestamp: Date.now(),
+      });
       throw quickProbe.error;
     }
 
+    const finishedStdout = await quickProbe.finished.stdout().catch(() => "");
+    const finishedStderr = await quickProbe.finished.stderr().catch(() => "");
+
+    this.hooks?.onLog?.({
+      sandboxId: this.id,
+      command,
+      exitCode: quickProbe.finished.exitCode,
+      stdout: finishedStdout,
+      stderr: finishedStderr,
+      timestamp: Date.now(),
+    });
+
     if (quickProbe.finished.exitCode !== 0) {
-      const stderr = await quickProbe.finished.stderr();
-      const trimmedStderr = stderr.trim();
+      const trimmedStderr = finishedStderr.trim();
       const stderrSnippet = trimmedStderr
         ? trimmedStderr.slice(0, MAX_OUTPUT_LENGTH)
         : "<no stderr>";
@@ -1040,6 +1087,9 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
       type: "vercel",
       sandboxName: this.name,
       ...(this.expiresAt !== undefined ? { expiresAt: this.expiresAt } : {}),
+      ...(this._ports && this._ports.length > 0
+        ? { ports: [...this._ports] }
+        : {}),
     };
   }
 }
@@ -1081,7 +1131,6 @@ export async function connectVercelSandbox(
 
   if (sandboxName) {
     return VercelSandbox.connect(sandboxName, {
-      env: connectConfig.env,
       githubToken: connectConfig.githubToken,
       hooks: connectConfig.hooks,
       remainingTimeout: connectConfig.remainingTimeout,

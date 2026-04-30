@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
+import type { GitProvider, RepoRef } from "@/lib/git-providers/types";
 import type { AutoCreatePrResult } from "./auto-pr-direct";
 
 mock.module("server-only", () => ({}));
@@ -11,12 +12,11 @@ type ExecResult = {
 };
 
 let execResults: Map<string, ExecResult>;
-let userTokenResult: string | null = "ghp_user";
-let cachedBranchesResult: { branches: string[]; defaultBranch: string } | null =
-  {
-    branches: ["main", "feature-branch"],
-    defaultBranch: "main",
-  };
+let providerTokenResult: string | null = "ghp_user";
+let providerDefaultBranch: string | null = "main";
+let providerValidIdentifiers = true;
+let providerAuthUrl: string | null =
+  "https://x-access-token:ghp_user@github.com/acme/repo.git";
 let findPullRequestResult: {
   found: boolean;
   prNumber?: number;
@@ -65,13 +65,36 @@ const execSpy = mock(async (command: string): Promise<ExecResult> => {
 });
 
 const updateSessionSpy = mock(async () => {});
-const fetchGitHubBranchesSpy = mock(async () => cachedBranchesResult);
-const findPullRequestByBranchSpy = mock(async () => findPullRequestResult);
-const createPullRequestSpy = mock(async () => createPullRequestResult);
 const generatePullRequestContentFromSandboxSpy = mock(
   async () => prContentResult,
 );
-const getUserGitHubTokenSpy = mock(async (_userId?: string) => userTokenResult);
+
+const validateRepoIdentifiersSpy = mock(() => providerValidIdentifiers);
+const getCloneTokenSpy = mock(async (_userId?: string) => providerTokenResult);
+const buildAuthRemoteUrlSpy = mock(() => providerAuthUrl);
+const getDefaultBranchSpy = mock(async () => providerDefaultBranch);
+const findPullRequestByBranchSpy = mock(async () => findPullRequestResult);
+const createPullRequestSpy = mock(async () => createPullRequestResult);
+
+function makeFakeProvider(
+  id: GitProvider["id"] = "github",
+  overrides: Partial<GitProvider> = {},
+): GitProvider {
+  return {
+    id,
+    validateRepoIdentifiers: validateRepoIdentifiersSpy,
+    getCloneToken: getCloneTokenSpy,
+    buildAuthRemoteUrl: buildAuthRemoteUrlSpy,
+    getDefaultBranch: getDefaultBranchSpy,
+    findPullRequestByBranch: findPullRequestByBranchSpy,
+    createPullRequest: createPullRequestSpy,
+    getPullRequestStatus: async () => ({ success: true, status: "open" }),
+    buildPullRequestUrl: () => "https://example.com/pr/1",
+    buildRepoWebUrl: () => "https://example.com/repo",
+    fetchRepoFile: async () => null,
+    ...overrides,
+  };
+}
 
 const sandbox = {
   workingDirectory: "/vercel/sandbox",
@@ -84,19 +107,6 @@ mock.module("@/app/api/generate-pr/_lib/generate-pr-helpers", () => ({
 
 mock.module("@/lib/db/sessions", () => ({
   updateSession: updateSessionSpy,
-}));
-
-mock.module("@/lib/github/api", () => ({
-  fetchGitHubBranches: fetchGitHubBranchesSpy,
-}));
-
-mock.module("@/lib/github/user-token", () => ({
-  getUserGitHubToken: getUserGitHubTokenSpy,
-}));
-
-mock.module("@/lib/github/client", () => ({
-  findPullRequestByBranch: findPullRequestByBranchSpy,
-  createPullRequest: createPullRequestSpy,
 }));
 
 mock.module("@/lib/git/pr-content", () => ({
@@ -129,32 +139,42 @@ function defaultExecResults(): Map<string, ExecResult> {
   ]);
 }
 
-function makeParams() {
+const githubRef: RepoRef = {
+  provider: "github",
+  owner: "acme",
+  repo: "repo",
+};
+
+function makeParams(
+  overrides: Partial<Parameters<typeof performAutoCreatePr>[0]> = {},
+) {
   return {
     sandbox: sandbox as never,
     userId: "user-1",
     sessionId: "session-1",
     sessionTitle: "Auto PR session",
-    repoOwner: "acme",
-    repoName: "repo",
+    provider: makeFakeProvider("github"),
+    ref: githubRef,
+    ...overrides,
   };
 }
 
 beforeEach(() => {
   execSpy.mockClear();
   updateSessionSpy.mockClear();
-  fetchGitHubBranchesSpy.mockClear();
+  generatePullRequestContentFromSandboxSpy.mockClear();
+  validateRepoIdentifiersSpy.mockClear();
+  getCloneTokenSpy.mockClear();
+  buildAuthRemoteUrlSpy.mockClear();
+  getDefaultBranchSpy.mockClear();
   findPullRequestByBranchSpy.mockClear();
   createPullRequestSpy.mockClear();
-  generatePullRequestContentFromSandboxSpy.mockClear();
-  getUserGitHubTokenSpy.mockClear();
 
   execResults = defaultExecResults();
-  userTokenResult = "ghp_user";
-  cachedBranchesResult = {
-    branches: ["main", "feature-branch"],
-    defaultBranch: "main",
-  };
+  providerTokenResult = "ghp_user";
+  providerDefaultBranch = "main";
+  providerValidIdentifiers = true;
+  providerAuthUrl = "https://x-access-token:ghp_user@github.com/acme/repo.git";
   findPullRequestResult = { found: false };
   createPullRequestResult = {
     success: true,
@@ -207,11 +227,10 @@ describe("performAutoCreatePr", () => {
     expect(createPullRequestSpy).not.toHaveBeenCalled();
   });
 
-  test("skips when the repository owner is not a safe GitHub path segment", async () => {
-    const result = await performAutoCreatePr({
-      ...makeParams(),
-      repoOwner: 'acme" && echo nope && "',
-    });
+  test("skips when the provider rejects the repo identifiers", async () => {
+    providerValidIdentifiers = false;
+
+    const result = await performAutoCreatePr(makeParams());
 
     expect(result).toEqual({
       created: false,
@@ -295,13 +314,14 @@ describe("performAutoCreatePr", () => {
       prNumber: 42,
       prUrl: "https://github.com/acme/repo/pull/42",
     } satisfies AutoCreatePrResult);
-    expect(getUserGitHubTokenSpy).toHaveBeenCalledWith("user-1");
+    expect(getCloneTokenSpy).toHaveBeenCalledWith("user-1");
     expect(generatePullRequestContentFromSandboxSpy).toHaveBeenCalledTimes(1);
     expect(createPullRequestSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        repoUrl: "https://github.com/acme/repo",
+        ref: githubRef,
         branchName: "feature-branch",
         baseBranch: "main",
+        title: "feat: improve auto pr",
       }),
     );
     expect(updateSessionSpy).toHaveBeenCalledWith("session-1", {
@@ -325,5 +345,63 @@ describe("performAutoCreatePr", () => {
       error: "Failed to resolve the repository default branch",
     } satisfies AutoCreatePrResult);
     expect(createPullRequestSpy).not.toHaveBeenCalled();
+  });
+
+  test("uses provider.createPullRequest for ADO sessions", async () => {
+    const adoRef: RepoRef = {
+      provider: "azure_devops",
+      org: "o",
+      project: "p",
+      repo: "r",
+    };
+
+    const adoCreatePullRequest = mock(async () => ({
+      success: true,
+      prNumber: 7,
+      prUrl: "https://dev.azure.com/o/p/_git/r/pullrequest/7",
+    }));
+    const adoFindPullRequestByBranch = mock(async () => ({ found: false }));
+    const adoGetCloneToken = mock(async () => "pat");
+    const adoGetDefaultBranch = mock(async () => "main");
+    const adoBuildAuthRemoteUrl = mock(
+      () => "https://anything:pat@dev.azure.com/o/p/_git/r",
+    );
+    const adoValidateRepoIdentifiers = mock(() => true);
+
+    const adoProvider: GitProvider = {
+      id: "azure_devops",
+      validateRepoIdentifiers: adoValidateRepoIdentifiers,
+      getCloneToken: adoGetCloneToken,
+      buildAuthRemoteUrl: adoBuildAuthRemoteUrl,
+      getDefaultBranch: adoGetDefaultBranch,
+      findPullRequestByBranch: adoFindPullRequestByBranch,
+      createPullRequest: adoCreatePullRequest,
+      getPullRequestStatus: async () => ({ success: true, status: "open" }),
+      buildPullRequestUrl: () =>
+        "https://dev.azure.com/o/p/_git/r/pullrequest/7",
+      buildRepoWebUrl: () => "https://dev.azure.com/o/p/_git/r",
+      fetchRepoFile: async () => null,
+    };
+
+    const result = await performAutoCreatePr({
+      sandbox: sandbox as never,
+      userId: "u1",
+      sessionId: "s1",
+      sessionTitle: "test",
+      provider: adoProvider,
+      ref: adoRef,
+    });
+
+    expect(result.created).toBe(true);
+    expect(result.prNumber).toBe(7);
+    expect(adoGetCloneToken).toHaveBeenCalledWith("u1");
+    expect(adoCreatePullRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ref: adoRef,
+        branchName: "feature-branch",
+        baseBranch: "main",
+        token: "pat",
+      }),
+    );
   });
 });

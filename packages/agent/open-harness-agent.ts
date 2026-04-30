@@ -1,4 +1,4 @@
-import type { SandboxState } from "@open-harness/sandbox";
+import type { SandboxHooks, SandboxState } from "@open-harness/sandbox";
 import { stepCountIs, ToolLoopAgent, type ToolSet } from "ai";
 import { z } from "zod";
 import { addCacheControl } from "./context-management";
@@ -36,6 +36,12 @@ export interface AgentSandboxContext {
   workingDirectory: string;
   currentBranch?: string;
   environmentDetails?: string;
+  /**
+   * Hooks forwarded to `connectSandbox` for every tool-driven sandbox
+   * connection. The host (e.g. the web app) wires `onLog` here so agent
+   * tool commands appear in the session's sandbox-logs panel.
+   */
+  hooks?: SandboxHooks;
 }
 
 const callOptionsSchema = z.object({

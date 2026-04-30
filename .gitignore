@@ -42,5 +42,8 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .open-harness-dev-server-state.json
 .open-harness-dev-server-*.pid
 
+# claude code runtime artifacts
+.claude/scheduled_tasks.lock
+
 # git worktrees
 .worktrees

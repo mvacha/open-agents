@@ -1,4 +1,3 @@
-import { connectSandbox } from "@open-harness/sandbox";
 import {
   requireAuthenticatedUser,
   requireOwnedSessionWithSandboxGuard,
@@ -6,6 +5,7 @@ import {
 import { updateSession } from "@/lib/db/sessions";
 import { findPullRequestByBranch } from "@/lib/github/client";
 import { getUserGitHubToken } from "@/lib/github/user-token";
+import { connectSandboxForSession } from "@/lib/sandbox/connect";
 import { isSandboxActive } from "@/lib/sandbox/utils";
 
 interface CheckPrRequest {
@@ -62,7 +62,7 @@ export async function POST(req: Request) {
 
   try {
     // 1. Get current branch from sandbox
-    const sandbox = await connectSandbox(sandboxState);
+    const sandbox = await connectSandboxForSession(sandboxState, sessionId);
     const cwd = sandbox.workingDirectory;
     const symbolicRefResult = await sandbox.exec(
       "git symbolic-ref --short HEAD",

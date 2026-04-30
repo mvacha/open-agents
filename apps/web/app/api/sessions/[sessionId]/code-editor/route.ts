@@ -1,4 +1,4 @@
-import { connectSandbox } from "@open-harness/sandbox";
+import type { Sandbox } from "@open-harness/sandbox";
 import {
   requireAuthenticatedUser,
   requireOwnedSessionWithSandboxGuard,
@@ -7,6 +7,7 @@ import {
   isManagedTemplateTrialUser,
   MANAGED_TEMPLATE_TRIAL_CODE_EDITOR_ERROR,
 } from "@/lib/managed-template-trial";
+import { connectSandboxForSession } from "@/lib/sandbox/connect";
 import { CODE_SERVER_PORT, DEFAULT_SANDBOX_PORTS } from "@/lib/sandbox/config";
 import { getServerSession } from "@/lib/session/get-server-session";
 import { isSandboxActive } from "@/lib/sandbox/utils";
@@ -32,7 +33,7 @@ export type CodeEditorStopResponse = {
 
 const CODE_SERVER_PIDFILE = "/tmp/open-harness-code-server.pid";
 
-type ConnectedSandbox = Awaited<ReturnType<typeof connectSandbox>>;
+type ConnectedSandbox = Sandbox;
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -61,7 +62,7 @@ async function connectCodeEditorSandbox(sessionId: string, userId: string) {
     };
   }
 
-  const sandbox = await connectSandbox(sandboxState, {
+  const sandbox = await connectSandboxForSession(sandboxState, sessionId, {
     ports: DEFAULT_SANDBOX_PORTS,
   });
 

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { connectSandbox, type SandboxState } from "@open-harness/sandbox";
+import type { SandboxState } from "@open-harness/sandbox";
 import {
   getChatsBySessionId,
   getSessionById,
@@ -10,6 +10,7 @@ import {
   SANDBOX_EXPIRES_BUFFER_MS,
   SANDBOX_INACTIVITY_TIMEOUT_MS,
 } from "./config";
+import { connectSandboxForSession } from "./connect";
 import {
   canOperateOnSandbox,
   clearSandboxState,
@@ -206,7 +207,7 @@ export async function evaluateSandboxLifecycle(
       lifecycleError: null,
     });
 
-    const sandbox = await connectSandbox(sandboxState);
+    const sandbox = await connectSandboxForSession(sandboxState, sessionId);
 
     if (await hasActiveStreamForSession(sessionId)) {
       await restoreActiveLifecycleState(sessionId, sandboxState);

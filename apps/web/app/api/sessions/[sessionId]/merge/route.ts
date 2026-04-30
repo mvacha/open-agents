@@ -86,6 +86,16 @@ export async function POST(req: Request, context: RouteContext) {
 
   const { sessionRecord } = sessionContext;
 
+  if (sessionRecord.repoProvider === "azure_devops") {
+    return Response.json(
+      {
+        error:
+          "Merging Azure DevOps pull requests from this app is not supported. Merge in Azure DevOps directly.",
+      },
+      { status: 501 },
+    );
+  }
+
   if (
     !sessionRecord.cloneUrl ||
     !sessionRecord.repoOwner ||

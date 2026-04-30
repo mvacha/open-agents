@@ -19,6 +19,11 @@ interface GitHubRepoInfo {
   default_branch: string;
 }
 
+interface GitHubContentsResponse {
+  content?: string;
+  encoding?: string;
+}
+
 function normalizeGitHubLimit(limit: number | undefined): number | undefined {
   return typeof limit === "number" && Number.isFinite(limit)
     ? Math.max(1, Math.min(limit, 100))
@@ -125,4 +130,49 @@ export async function fetchGitHubBranches(
       : allBranches,
     defaultBranch,
   };
+}
+
+function encodeGitHubContentsPath(path: string): string {
+  return path
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+export async function fetchGitHubRepoFile(args: {
+  owner: string;
+  repo: string;
+  branch: string;
+  path: string;
+  token: string;
+}): Promise<string | null> {
+  const encodedPath = encodeGitHubContentsPath(args.path);
+  const url = `https://api.github.com/repos/${args.owner}/${args.repo}/contents/${encodedPath}?ref=${encodeURIComponent(args.branch)}`;
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${args.token}`,
+      Accept: "application/vnd.github.v3+json",
+    },
+  });
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `GitHub fetchRepoFile failed: ${response.status} ${response.statusText}`,
+    );
+  }
+
+  const data = (await response.json()) as GitHubContentsResponse;
+  if (data.encoding !== "base64" || typeof data.content !== "string") {
+    throw new Error(
+      `GitHub fetchRepoFile: unexpected response shape for ${args.path}`,
+    );
+  }
+
+  return Buffer.from(data.content, "base64").toString("utf-8");
 }

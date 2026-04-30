@@ -4,6 +4,7 @@ export type {
   Sandbox,
   SandboxHook,
   SandboxHooks,
+  SandboxLogEntry,
   SandboxStats,
   SandboxType,
   SnapshotResult,

@@ -16,6 +16,25 @@ export async function userExists(userId: string): Promise<boolean> {
   return result.length > 0;
 }
 
+export async function getUserById(userId: string): Promise<{
+  id: string;
+  username: string;
+  email: string | null;
+  name: string | null;
+} | null> {
+  const result = await db
+    .select({
+      id: users.id,
+      username: users.username,
+      email: users.email,
+      name: users.name,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return result[0] ?? null;
+}
+
 export async function upsertUser(userData: {
   provider: "github" | "vercel";
   externalId: string;

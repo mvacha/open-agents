@@ -1,27 +1,58 @@
 import path from "node:path";
-import { connectSandbox } from "@open-harness/sandbox";
+import type { Sandbox } from "@open-harness/sandbox";
 import {
   requireAuthenticatedUser,
   requireOwnedSessionWithSandboxGuard,
 } from "@/app/api/sessions/_lib/session-context";
+import {
+  launchDeclaredProcesses,
+  stopDeclaredProcesses,
+} from "@/lib/open-agents-config/processes";
+import { readOpenAgentsConfigFromSandbox } from "@/lib/open-agents-config/sandbox-config";
+import type { OpenAgentsConfig } from "@/lib/open-agents-config/schema";
+import { runSetupCommands } from "@/lib/open-agents-config/setup";
 import { DEFAULT_SANDBOX_PORTS } from "@/lib/sandbox/config";
+import { connectSandboxForSession } from "@/lib/sandbox/connect";
 import { isSandboxActive } from "@/lib/sandbox/utils";
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
 
-export type DevServerLaunchResponse = {
+export type DevServerHeuristicLaunchResponse = {
+  mode: "heuristic";
   packagePath: string;
   port: number;
   url: string;
 };
 
-export type DevServerStopResponse = {
-  stopped: boolean;
-  packagePath: string;
+export type DevServerDeclaredProcess = {
+  name: string;
+  cwd: string;
   port: number;
+  url?: string | undefined;
 };
+
+export type DevServerDeclaredLaunchResponse = {
+  mode: "declared";
+  processes: DevServerDeclaredProcess[];
+};
+
+export type DevServerLaunchResponse =
+  | DevServerHeuristicLaunchResponse
+  | DevServerDeclaredLaunchResponse;
+
+export type DevServerStopResponse =
+  | {
+      mode: "heuristic";
+      stopped: boolean;
+      packagePath: string;
+      port: number;
+    }
+  | {
+      mode: "declared";
+      stopped: { name: string; pid: string | null }[];
+    };
 
 type PackageManager = "bun" | "pnpm" | "yarn" | "npm";
 type DevFramework =
@@ -33,7 +64,7 @@ type DevFramework =
   | "nuxt"
   | "custom";
 
-type ConnectedSandbox = Awaited<ReturnType<typeof connectSandbox>>;
+type ConnectedSandbox = Sandbox;
 
 interface PackageManifest {
   packageManager?: string;
@@ -678,12 +709,13 @@ function getDevServerStateFilePath(workingDirectory: string): string {
 function buildDevServerResponse(
   sandbox: ConnectedSandbox,
   target: Pick<ResolvedDevServerTarget, "packagePath" | "port">,
-): DevServerLaunchResponse {
+): DevServerHeuristicLaunchResponse {
   if (!sandbox.domain) {
     throw new Error("Sandbox does not expose preview URLs");
   }
 
   return {
+    mode: "heuristic",
     packagePath: target.packagePath,
     port: target.port,
     url: sandbox.domain(target.port),
@@ -885,14 +917,101 @@ async function connectDevServerSandboxForSession(
     };
   }
 
-  const sandbox = await connectSandbox(sandboxState, {
-    ports: DEFAULT_SANDBOX_PORTS,
+  const sandboxStatePorts =
+    sandboxState.type === "vercel" && Array.isArray(sandboxState.ports)
+      ? sandboxState.ports
+      : undefined;
+
+  const sandbox = await connectSandboxForSession(sandboxState, sessionId, {
+    ports: sandboxStatePorts ?? DEFAULT_SANDBOX_PORTS,
   });
 
   return {
     ok: true as const,
     sandbox,
+    sandboxStatePorts,
   };
+}
+
+function declaredProcessesToResponse(
+  sandbox: ConnectedSandbox,
+  config: OpenAgentsConfig,
+): DevServerDeclaredLaunchResponse {
+  const processes: DevServerDeclaredProcess[] = config.dev.map(
+    (process, index) => ({
+      name: process.name,
+      cwd: process.cwd,
+      port: process.port,
+      ...(index === 0 && sandbox.domain
+        ? { url: sandbox.domain(process.port) }
+        : {}),
+    }),
+  );
+
+  return {
+    mode: "declared",
+    processes,
+  };
+}
+
+function arePortsInSync(
+  declaredPorts: number[],
+  sandboxStatePorts: number[] | undefined,
+): boolean {
+  const exposedPorts = new Set(sandboxStatePorts ?? DEFAULT_SANDBOX_PORTS);
+  return declaredPorts.every((port) => exposedPorts.has(port));
+}
+
+async function handleDeclaredLaunch(args: {
+  sandbox: ConnectedSandbox;
+  config: OpenAgentsConfig;
+  sandboxStatePorts: number[] | undefined;
+}): Promise<Response> {
+  const { sandbox, config, sandboxStatePorts } = args;
+  const declaredPorts = Array.from(new Set(config.dev.map((p) => p.port)));
+
+  if (!arePortsInSync(declaredPorts, sandboxStatePorts)) {
+    return Response.json(
+      {
+        error:
+          "Sandbox ports out of sync with config.json. Reset the sandbox to apply.",
+        expected: declaredPorts,
+        actual: sandboxStatePorts ?? DEFAULT_SANDBOX_PORTS,
+      },
+      { status: 409 },
+    );
+  }
+
+  const setupResult = await runSetupCommands({
+    sandbox,
+    setup: config.setup,
+    env: config.env,
+  });
+  if (!setupResult.ok) {
+    return Response.json(
+      {
+        error: "Setup failed",
+        failed: setupResult.failed,
+      },
+      { status: 500 },
+    );
+  }
+
+  const launch = await launchDeclaredProcesses({
+    sandbox,
+    processes: config.dev,
+  });
+  if (!launch.ok) {
+    return Response.json(
+      {
+        error: `Process "${launch.failed.name}" failed to start`,
+        failed: launch.failed,
+      },
+      { status: 500 },
+    );
+  }
+
+  return Response.json(declaredProcessesToResponse(sandbox, config));
 }
 
 export async function POST(_req: Request, context: RouteContext) {
@@ -912,12 +1031,43 @@ export async function POST(_req: Request, context: RouteContext) {
       return sandboxResult.response;
     }
 
-    const { sandbox } = sandboxResult;
+    const { sandbox, sandboxStatePorts } = sandboxResult;
     if (!sandbox.execDetached) {
       return Response.json(
         { error: "Sandbox does not support background commands" },
         { status: 500 },
       );
+    }
+
+    let configRead;
+    try {
+      configRead = await readOpenAgentsConfigFromSandbox(sandbox);
+    } catch (error) {
+      console.error("Failed to read .open-agents/config.json:", error);
+      return Response.json(
+        {
+          error: "Failed to read .open-agents/config.json",
+        },
+        { status: 500 },
+      );
+    }
+
+    if (configRead.kind === "invalid") {
+      return Response.json(
+        {
+          error: ".open-agents/config.json is invalid",
+          details: configRead.error,
+        },
+        { status: 422 },
+      );
+    }
+
+    if (configRead.kind === "ok") {
+      return handleDeclaredLaunch({
+        sandbox,
+        config: configRead.config,
+        sandboxStatePorts,
+      });
     }
 
     const persistedTarget = await readPersistedDevServerTarget(sandbox);
@@ -1012,6 +1162,23 @@ export async function DELETE(_req: Request, context: RouteContext) {
     }
 
     const { sandbox } = sandboxResult;
+
+    let configRead;
+    try {
+      configRead = await readOpenAgentsConfigFromSandbox(sandbox);
+    } catch (error) {
+      console.error("Failed to read .open-agents/config.json:", error);
+      configRead = { kind: "missing" } as const;
+    }
+
+    if (configRead.kind === "ok" || configRead.kind === "invalid") {
+      const stopped = await stopDeclaredProcesses({ sandbox });
+      return Response.json({
+        mode: "declared",
+        stopped,
+      } satisfies DevServerStopResponse);
+    }
+
     const persistedTarget = await readPersistedDevServerTarget(sandbox);
     if (persistedTarget) {
       const stopped = await stopDevServer({
@@ -1023,6 +1190,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
 
       if (stopped) {
         return Response.json({
+          mode: "heuristic",
           stopped,
           packagePath: persistedTarget.packagePath,
           port: persistedTarget.port,
@@ -1048,6 +1216,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     }
 
     return Response.json({
+      mode: "heuristic",
       stopped,
       packagePath: target.packagePath,
       port: target.port,

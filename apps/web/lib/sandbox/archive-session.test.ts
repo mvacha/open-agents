@@ -8,6 +8,11 @@ interface TestSessionRecord {
   status: "running" | "archived";
   repoOwner: string | null;
   repoName: string | null;
+  repoProvider: "github" | "azure_devops";
+  repoMeta:
+    | { provider: "github" }
+    | { provider: "azure_devops"; project: string }
+    | null;
   branch: string | null;
   cloneUrl: string | null;
   prNumber: number | null;
@@ -134,6 +139,21 @@ mock.module("@/lib/github/user-token", () => ({
 mock.module("@/lib/github/client", () => ({
   getPullRequestStatus: spies.getPullRequestStatus,
   findPullRequestByBranch: spies.findPullRequestByBranch,
+  // github-provider also imports these — supply safe defaults so module
+  // resolution works even when the test only exercises status/find paths.
+  createPullRequest: async () => ({ success: false }),
+  enablePullRequestAutoMerge: async () => ({ success: false }),
+  closePullRequest: async () => ({ success: true }),
+  deleteBranchRef: async () => ({ success: true }),
+  getPullRequestMergeReadiness: async () => ({
+    success: false,
+    canMerge: false,
+    reasons: [],
+    allowedMethods: ["squash"],
+    defaultMethod: "squash",
+    checks: { requiredTotal: 0, passed: 0, pending: 0, failed: 0 },
+    checkRuns: [],
+  }),
 }));
 
 const archiveSessionModulePromise = import("./archive-session");
@@ -147,6 +167,8 @@ function makeSessionRecord(
     status: "running",
     repoOwner: "acme",
     repoName: "widgets",
+    repoProvider: "github",
+    repoMeta: null,
     branch: "feature/session-1",
     cloneUrl: "https://github.com/acme/widgets.git",
     prNumber: 42,
