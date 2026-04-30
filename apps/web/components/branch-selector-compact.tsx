@@ -20,9 +20,12 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 
+type BranchSelectorSource =
+  | { provider: "github"; owner: string; repo: string }
+  | { provider: "azure_devops"; projectId: string; repo: string };
+
 interface BranchSelectorCompactProps {
-  owner: string;
-  repo: string;
+  source: BranchSelectorSource;
   value: string | null;
   isNewBranch: boolean;
   onChange: (branch: string | null, isNewBranch: boolean) => void;
@@ -33,9 +36,31 @@ interface BranchesResponse {
   defaultBranch: string;
 }
 
+function buildBranchesUrl(source: BranchSelectorSource, query: string): string {
+  if (source.provider === "github") {
+    const params = new URLSearchParams({
+      owner: source.owner,
+      repo: source.repo,
+      limit: "50",
+    });
+    if (query) params.set("query", query);
+    return `/api/github/branches?${params.toString()}`;
+  }
+  const params = new URLSearchParams({ limit: "50" });
+  if (query) params.set("query", query);
+  return `/api/azure-devops/projects/${encodeURIComponent(
+    source.projectId,
+  )}/repos/${encodeURIComponent(source.repo)}/branches?${params.toString()}`;
+}
+
+function sourceKey(source: BranchSelectorSource): string {
+  return source.provider === "github"
+    ? `gh:${source.owner}/${source.repo}`
+    : `ado:${source.projectId}/${source.repo}`;
+}
+
 export function BranchSelectorCompact({
-  owner,
-  repo,
+  source,
   value,
   isNewBranch,
   onChange,
@@ -46,14 +71,7 @@ export function BranchSelectorCompact({
 
   const autoSelectedKeyRef = useRef<string | null>(null);
 
-  const branchesUrl =
-    owner && repo
-      ? `/api/github/branches?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}&limit=50${
-          deferredSearchQuery
-            ? `&query=${encodeURIComponent(deferredSearchQuery)}`
-            : ""
-        }`
-      : null;
+  const branchesUrl = buildBranchesUrl(source, deferredSearchQuery);
 
   const { data, isLoading, isValidating } = useSWR<BranchesResponse>(
     branchesUrl,
@@ -64,19 +82,18 @@ export function BranchSelectorCompact({
   const defaultBranch = data?.defaultBranch ?? "main";
   const isBranchLoading = isLoading || isValidating;
 
-  useEffect(() => {
-    if (!owner || !repo) return;
+  const key = sourceKey(source);
 
-    const key = `${owner}/${repo}`;
+  useEffect(() => {
     if (data && !value && !isNewBranch && autoSelectedKeyRef.current !== key) {
       autoSelectedKeyRef.current = key;
       onChange(null, true);
     }
-  }, [data, value, isNewBranch, onChange, owner, repo]);
+  }, [data, value, isNewBranch, onChange, key]);
 
   useEffect(() => {
     setSearchQuery("");
-  }, [owner, repo]);
+  }, [key]);
 
   const handleSelectBranch = (branch: string) => {
     onChange(branch, false);

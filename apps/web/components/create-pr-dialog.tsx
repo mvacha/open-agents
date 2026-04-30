@@ -123,6 +123,9 @@ export function CreatePRDialog({
   const [enableAutoMerge, setEnableAutoMerge] = useState(false);
   const isDraft = prCreationMode === "draft";
 
+  const isAzureDevOps = session.repoProvider === "azure_devops";
+  const providerLabel = isAzureDevOps ? "Azure DevOps" : "GitHub";
+
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
@@ -181,13 +184,17 @@ export function CreatePRDialog({
   const needsNewBranch = isOnBaseBranch || isDetachedHead;
   const normalizedRepoOwner = session.repoOwner?.toLowerCase() ?? null;
   const normalizedHeadOwner = prHeadOwner?.toLowerCase() ?? null;
-  const shouldOpenCompareInsteadOfApi = Boolean(
-    gitActions?.pushedToFork ||
-    (normalizedRepoOwner &&
-      normalizedHeadOwner &&
-      normalizedHeadOwner !== normalizedRepoOwner),
-  );
-  const canEnableAutoMerge = !isDraft && !shouldOpenCompareInsteadOfApi;
+  const shouldOpenCompareInsteadOfApi =
+    !isAzureDevOps &&
+    Boolean(
+      gitActions?.pushedToFork ||
+      (normalizedRepoOwner &&
+        normalizedHeadOwner &&
+        normalizedHeadOwner !== normalizedRepoOwner),
+    );
+  // Auto-merge is GitHub-only.
+  const canEnableAutoMerge =
+    !isAzureDevOps && !isDraft && !shouldOpenCompareInsteadOfApi;
 
   useEffect(() => {
     if (!canEnableAutoMerge) {
@@ -337,7 +344,7 @@ export function CreatePRDialog({
           requiresManualCreation: true,
           autoMergeEnabled: false,
           autoMergeError: enableAutoMerge
-            ? "Auto-merge can only be enabled for pull requests created through the GitHub API."
+            ? `Auto-merge can only be enabled for pull requests created through the ${providerLabel} API.`
             : undefined,
         });
         await onGitMessage?.({
@@ -466,15 +473,15 @@ export function CreatePRDialog({
               <p className="font-medium">
                 {result.requiresManualCreation
                   ? isDraft
-                    ? "Open GitHub to create the draft pull request"
-                    : "Open GitHub to create the pull request"
+                    ? `Open ${providerLabel} to create the draft pull request`
+                    : `Open ${providerLabel} to create the pull request`
                   : result.autoMergeEnabled
                     ? "Pull request created and auto-merge enabled!"
                     : isDraft
                       ? "Draft pull request created successfully!"
                       : "Pull request created successfully!"}
               </p>
-              {/* External link to GitHub - not internal navigation */}
+              {/* External link to provider - not internal navigation */}
               {/* oxlint-disable-next-line nextjs/no-html-link-for-pages */}
               <a
                 href={result.prUrl}
@@ -484,13 +491,13 @@ export function CreatePRDialog({
               >
                 {result.requiresManualCreation
                   ? "Open compare page"
-                  : "View on GitHub"}
+                  : `View on ${providerLabel}`}
                 <ExternalLink className="h-3 w-3" />
               </a>
               {result.autoMergeEnabled && (
                 <p className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2 text-left text-sm text-green-700 dark:text-green-300">
-                  GitHub will merge this PR automatically once the required
-                  checks pass.
+                  {providerLabel} will merge this PR automatically once the
+                  required checks pass.
                 </p>
               )}
               {result.autoMergeError && (
@@ -583,17 +590,17 @@ export function CreatePRDialog({
                   {shouldOpenCompareInsteadOfApi && (
                     <div className="rounded-md border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-blue-800 dark:text-blue-300">
                       We pushed your branch, but this repository does not allow
-                      API-based PR creation for the current app token. Open
-                      GitHub to create the PR from the compare page.
+                      API-based PR creation for the current app token. Open{" "}
+                      {providerLabel} to create the PR from the compare page.
                       {isDraft && (
                         <p className="mt-2">
-                          GitHub will still open the standard compare flow.
-                          Choose
+                          {providerLabel} will still open the standard compare
+                          flow. Choose
                           <span className="font-medium">
                             {" "}
                             Create draft pull request
-                          </span>
-                          on GitHub to keep it in draft mode.
+                          </span>{" "}
+                          on {providerLabel} to keep it in draft mode.
                         </p>
                       )}
                     </div>
@@ -625,24 +632,26 @@ export function CreatePRDialog({
                     />
                   </div>
 
-                  <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 p-3">
-                    <div className="space-y-0.5 pr-4">
-                      <Label htmlFor="pr-auto-merge">Enable auto-merge</Label>
-                      <p className="text-xs text-muted-foreground">
-                        {shouldOpenCompareInsteadOfApi
-                          ? "Unavailable when the pull request must be created from GitHub's compare page."
-                          : isDraft
-                            ? "Unavailable for draft pull requests."
-                            : "Automatically merge once required checks pass."}
-                      </p>
+                  {!isAzureDevOps && (
+                    <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 p-3">
+                      <div className="space-y-0.5 pr-4">
+                        <Label htmlFor="pr-auto-merge">Enable auto-merge</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {shouldOpenCompareInsteadOfApi
+                            ? `Unavailable when the pull request must be created from ${providerLabel}'s compare page.`
+                            : isDraft
+                              ? "Unavailable for draft pull requests."
+                              : "Automatically merge once required checks pass."}
+                        </p>
+                      </div>
+                      <Switch
+                        id="pr-auto-merge"
+                        checked={enableAutoMerge}
+                        onCheckedChange={setEnableAutoMerge}
+                        disabled={isDisabled || !canEnableAutoMerge}
+                      />
                     </div>
-                    <Switch
-                      id="pr-auto-merge"
-                      checked={enableAutoMerge}
-                      onCheckedChange={setEnableAutoMerge}
-                      disabled={isDisabled || !canEnableAutoMerge}
-                    />
-                  </div>
+                  )}
                 </>
               )}
 

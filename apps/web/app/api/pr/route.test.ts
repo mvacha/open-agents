@@ -97,6 +97,17 @@ function registerRouteMocks() {
     },
     findPullRequestByBranch: async () => ({ found: false }),
     getPullRequestStatus: async () => ({ success: true, status: "open" }),
+    closePullRequest: async () => ({ success: false }),
+    mergePullRequest: async () => ({ success: false }),
+    getPullRequestMergeReadiness: async () => ({
+      success: false,
+      canMerge: false,
+      reasons: [],
+      allowedMethods: ["squash"],
+      defaultMethod: "squash",
+      checks: { requiredTotal: 0, passed: 0, pending: 0, failed: 0 },
+    }),
+    deleteBranchRef: async () => ({ success: false }),
   }));
 }
 

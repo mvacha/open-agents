@@ -145,6 +145,7 @@ mock.module("@/lib/github/client", () => ({
   enablePullRequestAutoMerge: async () => ({ success: false }),
   closePullRequest: async () => ({ success: true }),
   deleteBranchRef: async () => ({ success: true }),
+  mergePullRequest: async () => ({ success: false }),
   getPullRequestMergeReadiness: async () => ({
     success: false,
     canMerge: false,

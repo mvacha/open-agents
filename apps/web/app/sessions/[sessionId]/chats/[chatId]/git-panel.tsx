@@ -30,7 +30,7 @@ import type { Session } from "@/lib/db/schema";
 import type {
   PullRequestCheckRun,
   PullRequestMergeMethod,
-} from "@/lib/github/client";
+} from "@/lib/git-providers/types";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -631,6 +631,9 @@ function InlinePrCreatePanel({
   const [isExpanded, setIsExpanded] = useState(false);
   const [enableAutoMerge, setEnableAutoMerge] = useState(false);
 
+  const isAzureDevOps = session.repoProvider === "azure_devops";
+  const providerLabel = isAzureDevOps ? "Azure DevOps" : "GitHub";
+
   const branchFromStatus =
     resolvedBranch ??
     (gitStatus?.branch && gitStatus.branch !== "HEAD"
@@ -643,12 +646,15 @@ function InlinePrCreatePanel({
 
   const normalizedRepoOwner = session.repoOwner?.toLowerCase() ?? null;
   const normalizedHeadOwner = prHeadOwner?.toLowerCase() ?? null;
-  const shouldOpenCompareInsteadOfApi = Boolean(
-    normalizedRepoOwner &&
-    normalizedHeadOwner &&
-    normalizedHeadOwner !== normalizedRepoOwner,
-  );
-  const canEnableAutoMerge = !shouldOpenCompareInsteadOfApi;
+  const shouldOpenCompareInsteadOfApi =
+    !isAzureDevOps &&
+    Boolean(
+      normalizedRepoOwner &&
+      normalizedHeadOwner &&
+      normalizedHeadOwner !== normalizedRepoOwner,
+    );
+  // Auto-merge is GitHub-only.
+  const canEnableAutoMerge = !isAzureDevOps && !shouldOpenCompareInsteadOfApi;
 
   useEffect(() => {
     if (!canEnableAutoMerge) {
@@ -756,9 +762,11 @@ function InlinePrCreatePanel({
         ],
       });
 
-      // Check if we need to open compare page instead
+      // Check if we need to open compare page instead.
+      // ADO has no fork model, so this fallback is GitHub-only.
       const headOwner = prHeadOwner?.trim() || session.repoOwner;
       const ownerMismatch =
+        !isAzureDevOps &&
         headOwner &&
         session.repoOwner &&
         headOwner.toLowerCase() !== session.repoOwner.toLowerCase();
@@ -910,7 +918,7 @@ function InlinePrCreatePanel({
         >
           {prSuccess.requiresManualCreation
             ? "Open compare page"
-            : "View on GitHub"}
+            : `View on ${providerLabel}`}
           <ExternalLink className="h-3 w-3" />
         </a>
       </div>
@@ -1023,21 +1031,23 @@ function InlinePrCreatePanel({
             rows={3}
             className="max-h-40 text-xs"
           />
-          <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 p-2">
-            <div className="space-y-0.5 pr-3">
-              <p className="text-xs font-medium">Auto-merge</p>
-              <p className="text-[10px] text-muted-foreground">
-                {shouldOpenCompareInsteadOfApi
-                  ? "Unavailable for compare page flow."
-                  : "Merge automatically once checks pass."}
-              </p>
+          {!isAzureDevOps && (
+            <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 p-2">
+              <div className="space-y-0.5 pr-3">
+                <p className="text-xs font-medium">Auto-merge</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {shouldOpenCompareInsteadOfApi
+                    ? "Unavailable for compare page flow."
+                    : "Merge automatically once checks pass."}
+                </p>
+              </div>
+              <Switch
+                checked={enableAutoMerge}
+                onCheckedChange={setEnableAutoMerge}
+                disabled={isAgentWorking || isCreatingPr || !canEnableAutoMerge}
+              />
             </div>
-            <Switch
-              checked={enableAutoMerge}
-              onCheckedChange={setEnableAutoMerge}
-              disabled={isAgentWorking || isCreatingPr || !canEnableAutoMerge}
-            />
-          </div>
+          )}
         </>
       )}
       <div className="flex w-full">

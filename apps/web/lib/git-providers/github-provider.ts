@@ -1,9 +1,13 @@
 import "server-only";
 import { fetchGitHubBranches, fetchGitHubRepoFile } from "@/lib/github/api";
 import {
+  closePullRequest,
   createPullRequest,
+  deleteBranchRef,
   findPullRequestByBranch,
+  getPullRequestMergeReadiness,
   getPullRequestStatus,
+  mergePullRequest,
 } from "@/lib/github/client";
 import {
   buildGitHubAuthRemoteUrl,
@@ -12,10 +16,14 @@ import {
 } from "@/lib/github/repo-identifiers";
 import { getUserGitHubToken } from "@/lib/github/user-token";
 import type {
+  ClosePrResult,
+  DeleteBranchResult,
   GitProvider,
+  MergePrResult,
   PrCreateResult,
   PrFindResult,
   PrStatusResult,
+  PullRequestMergeReadiness,
   RepoRef,
 } from "./types";
 
@@ -107,6 +115,64 @@ export const gitHubProvider: GitProvider = {
     if (!gh) return { success: false, error: "Not a GitHub repo" };
     const repoUrl = `https://github.com/${gh.owner}/${gh.repo}`;
     return getPullRequestStatus({ repoUrl, prNumber, token });
+  },
+
+  async closePullRequest({ ref, prNumber, token }): Promise<ClosePrResult> {
+    const gh = ensureGitHub(ref);
+    if (!gh) return { success: false, error: "Not a GitHub repo" };
+    const repoUrl = `https://github.com/${gh.owner}/${gh.repo}`;
+    return closePullRequest({ repoUrl, prNumber, token });
+  },
+
+  async mergePullRequest({
+    ref,
+    prNumber,
+    mergeMethod,
+    expectedHeadSha,
+    commitTitle,
+    commitMessage,
+    token,
+  }): Promise<MergePrResult> {
+    const gh = ensureGitHub(ref);
+    if (!gh) return { success: false, error: "Not a GitHub repo" };
+    const repoUrl = `https://github.com/${gh.owner}/${gh.repo}`;
+    return mergePullRequest({
+      repoUrl,
+      prNumber,
+      mergeMethod,
+      expectedHeadSha,
+      commitTitle,
+      commitMessage,
+      token,
+    });
+  },
+
+  async getMergeReadiness({
+    ref,
+    prNumber,
+    token,
+  }): Promise<PullRequestMergeReadiness> {
+    const gh = ensureGitHub(ref);
+    if (!gh) {
+      return {
+        success: false,
+        canMerge: false,
+        reasons: ["Not a GitHub repo"],
+        allowedMethods: ["squash"],
+        defaultMethod: "squash",
+        checks: { requiredTotal: 0, passed: 0, pending: 0, failed: 0 },
+        error: "Not a GitHub repo",
+      };
+    }
+    const repoUrl = `https://github.com/${gh.owner}/${gh.repo}`;
+    return getPullRequestMergeReadiness({ repoUrl, prNumber, token });
+  },
+
+  async deleteBranch({ ref, branchName, token }): Promise<DeleteBranchResult> {
+    const gh = ensureGitHub(ref);
+    if (!gh) return { success: false, error: "Not a GitHub repo" };
+    const repoUrl = `https://github.com/${gh.owner}/${gh.repo}`;
+    return deleteBranchRef({ repoUrl, branchName, token });
   },
 
   buildPullRequestUrl(ref, prNumber) {

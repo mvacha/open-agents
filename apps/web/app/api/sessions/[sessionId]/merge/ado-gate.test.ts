@@ -25,18 +25,73 @@ mock.module("@/lib/db/sessions", () => ({
   updateSession: async () => ({}),
 }));
 
-mock.module("@/lib/github/client", () => ({
-  getPullRequestMergeReadiness: async () => {
-    throw new Error("should not be called for ADO sessions");
-  },
-  closePullRequest: async () => ({ success: true }),
-  deleteBranchRef: async () => ({ success: true }),
-  enablePullRequestAutoMerge: async () => ({ success: true }),
-  mergePullRequest: async () => ({ success: true, sha: "abc" }),
+const adoMergeCalls: Array<Record<string, unknown>> = [];
+const adoDeleteCalls: Array<Record<string, unknown>> = [];
+
+mock.module("@/lib/git-providers/resolve", () => ({
+  getProviderForSession: () => ({
+    getCloneToken: async () => "ado-pat",
+    getMergeReadiness: async () => ({
+      success: true,
+      canMerge: true,
+      reasons: [],
+      allowedMethods: ["squash", "merge", "rebase"],
+      defaultMethod: "squash",
+      checks: { requiredTotal: 0, passed: 0, pending: 0, failed: 0 },
+      pr: {
+        number: 7,
+        state: "open",
+        isDraft: false,
+        title: "x",
+        body: null,
+        baseBranch: "main",
+        headBranch: "feature/x",
+        headSha: "abc1234",
+        headOwner: "contoso",
+        mergeable: true,
+        mergeableState: "Succeeded",
+        additions: 0,
+        deletions: 0,
+        changedFiles: 0,
+        commits: 0,
+      },
+    }),
+    mergePullRequest: async (input: Record<string, unknown>) => {
+      adoMergeCalls.push(input);
+      return { success: true, sha: "abc" };
+    },
+    deleteBranch: async (input: Record<string, unknown>) => {
+      adoDeleteCalls.push(input);
+      return { success: true };
+    },
+  }),
+  sessionToRepoRef: () => ({
+    provider: "azure_devops",
+    org: "contoso",
+    project: "Acme",
+    repo: "repo",
+  }),
 }));
 
-mock.module("@/lib/github/user-token", () => ({
-  getUserGitHubToken: async () => null,
+mock.module("@/lib/github/client", () => ({
+  // The github-provider transitively imports these; we never want them invoked.
+  getPullRequestMergeReadiness: async () => {
+    throw new Error("github client must not be called for ADO sessions");
+  },
+  closePullRequest: async () => {
+    throw new Error("github client must not be called for ADO sessions");
+  },
+  deleteBranchRef: async () => {
+    throw new Error("github client must not be called for ADO sessions");
+  },
+  enablePullRequestAutoMerge: async () => ({ success: false }),
+  mergePullRequest: async () => {
+    throw new Error("github client must not be called for ADO sessions");
+  },
+  parseGitHubUrl: () => null,
+  createPullRequest: async () => ({ success: false }),
+  findPullRequestByBranch: async () => ({ found: false }),
+  getPullRequestStatus: async () => ({ success: false }),
 }));
 
 const { POST } = await import("./route");
@@ -45,8 +100,8 @@ function ctx() {
   return { params: Promise.resolve({ sessionId: "s1" }) };
 }
 
-describe("POST /api/sessions/[sessionId]/merge — ADO gating", () => {
-  test("returns 501 with pointer to ADO when session is azure_devops", async () => {
+describe("POST /api/sessions/[sessionId]/merge — Azure DevOps", () => {
+  test("merges via the provider abstraction without calling the GitHub client", async () => {
     const response = await POST(
       new Request("http://localhost/api/sessions/s1/merge", {
         method: "POST",
@@ -56,8 +111,13 @@ describe("POST /api/sessions/[sessionId]/merge — ADO gating", () => {
       ctx(),
     );
 
-    expect(response.status).toBe(501);
-    const body = await response.json();
-    expect(body.error).toMatch(/Azure DevOps/i);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      merged: boolean;
+      mergeCommitSha: string | null;
+    };
+    expect(body.merged).toBe(true);
+    expect(body.mergeCommitSha).toBe("abc");
+    expect(adoMergeCalls).toHaveLength(1);
   });
 });

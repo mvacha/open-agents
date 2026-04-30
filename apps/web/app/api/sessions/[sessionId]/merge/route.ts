@@ -4,12 +4,10 @@ import {
 } from "@/app/api/sessions/_lib/session-context";
 import { updateSession } from "@/lib/db/sessions";
 import {
-  deleteBranchRef,
-  getPullRequestMergeReadiness,
-  mergePullRequest,
-  type PullRequestMergeMethod,
-} from "@/lib/github/client";
-import { getUserGitHubToken } from "@/lib/github/user-token";
+  getProviderForSession,
+  sessionToRepoRef,
+} from "@/lib/git-providers/resolve";
+import type { PullRequestMergeMethod } from "@/lib/git-providers/types";
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
@@ -86,23 +84,10 @@ export async function POST(req: Request, context: RouteContext) {
 
   const { sessionRecord } = sessionContext;
 
-  if (sessionRecord.repoProvider === "azure_devops") {
+  const ref = sessionToRepoRef(sessionRecord);
+  if (!ref) {
     return Response.json(
-      {
-        error:
-          "Merging Azure DevOps pull requests from this app is not supported. Merge in Azure DevOps directly.",
-      },
-      { status: 501 },
-    );
-  }
-
-  if (
-    !sessionRecord.cloneUrl ||
-    !sessionRecord.repoOwner ||
-    !sessionRecord.repoName
-  ) {
-    return Response.json(
-      { error: "Session is not linked to a GitHub repository" },
+      { error: "Session is not linked to a repository" },
       { status: 400 },
     );
   }
@@ -152,16 +137,17 @@ export async function POST(req: Request, context: RouteContext) {
     );
   }
 
-  const token = await getUserGitHubToken(authResult.userId);
+  const provider = getProviderForSession(sessionRecord);
+  const token = await provider.getCloneToken(authResult.userId);
   if (!token) {
     return Response.json(
-      { error: "No GitHub token available for this repository" },
+      { error: "No token available for this repository" },
       { status: 403 },
     );
   }
 
-  const readiness = await getPullRequestMergeReadiness({
-    repoUrl: sessionRecord.cloneUrl,
+  const readiness = await provider.getMergeReadiness({
+    ref,
     prNumber: sessionRecord.prNumber,
     token,
   });
@@ -222,8 +208,8 @@ export async function POST(req: Request, context: RouteContext) {
     );
   }
 
-  const mergeResult = await mergePullRequest({
-    repoUrl: sessionRecord.cloneUrl,
+  const mergeResult = await provider.mergePullRequest({
+    ref,
     prNumber: sessionRecord.prNumber,
     mergeMethod: requestedMethod,
     expectedHeadSha,
@@ -244,17 +230,21 @@ export async function POST(req: Request, context: RouteContext) {
   const shouldDeleteBranch = parsedBody.deleteBranch ?? true;
 
   if (shouldDeleteBranch && readiness.pr.headBranch) {
-    const normalizedRepoOwner = sessionRecord.repoOwner.toLowerCase();
+    const normalizedRepoOwner = sessionRecord.repoOwner?.toLowerCase() ?? null;
     const normalizedHeadOwner = readiness.pr.headOwner?.toLowerCase() ?? null;
 
     if (!normalizedHeadOwner) {
       branchDeleteError =
         "Source branch owner could not be determined; branch was not deleted";
-    } else if (normalizedHeadOwner !== normalizedRepoOwner) {
+    } else if (
+      ref.provider === "github" &&
+      normalizedRepoOwner &&
+      normalizedHeadOwner !== normalizedRepoOwner
+    ) {
       branchDeleteError = "Source branch belongs to a fork and was not deleted";
     } else {
-      const deleteResult = await deleteBranchRef({
-        repoUrl: sessionRecord.cloneUrl,
+      const deleteResult = await provider.deleteBranch({
+        ref,
         branchName: readiness.pr.headBranch,
         token,
       });

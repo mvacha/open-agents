@@ -88,6 +88,7 @@ export function SessionStarter({
   const isGithubSelection = selection?.provider === "github";
   const githubOwner = isGithubSelection ? selection.owner : "";
   const githubRepo = isGithubSelection ? selection.repo : "";
+  const isAdoSelection = selection?.provider === "azure_devops";
 
   const shouldLoadVercelProjects =
     mode === "repo" &&
@@ -189,8 +190,8 @@ export function SessionStarter({
           project: selection.project,
         },
         cloneUrl: selection.webUrl,
-        branch: undefined,
-        isNewBranch: true,
+        branch: selectedBranch || undefined,
+        isNewBranch,
         sandboxType,
         autoCommitPush: effectiveAutoCommitPush,
         autoCreatePr: effectiveAutoCommitPush ? effectiveAutoCreatePr : false,
@@ -217,10 +218,8 @@ export function SessionStarter({
 
     onSubmit({
       repoProvider: "github",
-      repoOwner:
-        mode === "repo" && isGithubSelection ? githubOwner : undefined,
-      repoName:
-        mode === "repo" && isGithubSelection ? githubRepo : undefined,
+      repoOwner: mode === "repo" && isGithubSelection ? githubOwner : undefined,
+      repoName: mode === "repo" && isGithubSelection ? githubRepo : undefined,
       branch: mode === "repo" ? selectedBranch || undefined : undefined,
       cloneUrl:
         mode === "repo" && isGithubSelection && githubOwner && githubRepo
@@ -290,13 +289,28 @@ export function SessionStarter({
               !githubConnectionLoading &&
               !reconnectRequired && (
                 <BranchSelectorCompact
-                  owner={githubOwner}
-                  repo={githubRepo}
+                  source={{
+                    provider: "github",
+                    owner: githubOwner,
+                    repo: githubRepo,
+                  }}
                   value={selectedBranch}
                   isNewBranch={isNewBranch}
                   onChange={handleBranchChange}
                 />
               )}
+            {isAdoSelection && selection.provider === "azure_devops" && (
+              <BranchSelectorCompact
+                source={{
+                  provider: "azure_devops",
+                  projectId: selection.project,
+                  repo: selection.repo,
+                }}
+                value={selectedBranch}
+                isNewBranch={isNewBranch}
+                onChange={handleBranchChange}
+              />
+            )}
 
             {showVercelProjectSection && (
               <SessionStarterVercelSyncSection

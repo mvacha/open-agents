@@ -3,8 +3,10 @@ import {
   requireOwnedSession,
 } from "@/app/api/sessions/_lib/session-context";
 import { updateSession } from "@/lib/db/sessions";
-import { closePullRequest } from "@/lib/github/client";
-import { getUserGitHubToken } from "@/lib/github/user-token";
+import {
+  getProviderForSession,
+  sessionToRepoRef,
+} from "@/lib/git-providers/resolve";
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
@@ -32,13 +34,10 @@ export async function POST(_req: Request, context: RouteContext) {
 
   const { sessionRecord } = sessionContext;
 
-  if (
-    !sessionRecord.cloneUrl ||
-    !sessionRecord.repoOwner ||
-    !sessionRecord.repoName
-  ) {
+  const ref = sessionToRepoRef(sessionRecord);
+  if (!ref) {
     return Response.json(
-      { error: "Session is not linked to a GitHub repository" },
+      { error: "Session is not linked to a repository" },
       { status: 400 },
     );
   }
@@ -64,16 +63,17 @@ export async function POST(_req: Request, context: RouteContext) {
     } satisfies ClosePullRequestResponse);
   }
 
-  const token = await getUserGitHubToken(authResult.userId);
+  const provider = getProviderForSession(sessionRecord);
+  const token = await provider.getCloneToken(authResult.userId);
   if (!token) {
     return Response.json(
-      { error: "No GitHub token available for this repository" },
+      { error: "No token available for this repository" },
       { status: 403 },
     );
   }
 
-  const closeResult = await closePullRequest({
-    repoUrl: sessionRecord.cloneUrl,
+  const closeResult = await provider.closePullRequest({
+    ref,
     prNumber: sessionRecord.prNumber,
     token,
   });

@@ -9,10 +9,14 @@ import {
   isValidAdoIdentifier,
 } from "@/lib/azure-devops/repo-identifiers";
 import type {
+  ClosePrResult,
+  DeleteBranchResult,
   GitProvider,
+  MergePrResult,
   PrCreateResult,
   PrFindResult,
   PrStatusResult,
+  PullRequestMergeReadiness,
   RepoRef,
 } from "./types";
 
@@ -114,6 +118,90 @@ export const azureDevOpsProvider: GitProvider = {
       project: ado.project,
       repo: ado.repo,
       prNumber,
+    });
+  },
+
+  async closePullRequest({ ref, prNumber }): Promise<ClosePrResult> {
+    const ado = ensureAdo(ref);
+    if (!ado) return { success: false, error: "Not an Azure DevOps repo" };
+    const client = getAdoClient();
+    if (!client) {
+      return { success: false, error: "Azure DevOps provider is disabled" };
+    }
+    return client.abandonPullRequest({
+      project: ado.project,
+      repo: ado.repo,
+      prNumber,
+    });
+  },
+
+  async mergePullRequest({
+    ref,
+    prNumber,
+    mergeMethod,
+    expectedHeadSha,
+  }): Promise<MergePrResult> {
+    const ado = ensureAdo(ref);
+    if (!ado) return { success: false, error: "Not an Azure DevOps repo" };
+    const client = getAdoClient();
+    if (!client) {
+      return { success: false, error: "Azure DevOps provider is disabled" };
+    }
+    return client.completePullRequest({
+      project: ado.project,
+      repo: ado.repo,
+      prNumber,
+      mergeMethod,
+      expectedHeadSha,
+    });
+  },
+
+  async getMergeReadiness({
+    ref,
+    prNumber,
+  }): Promise<PullRequestMergeReadiness> {
+    const ado = ensureAdo(ref);
+    if (!ado) {
+      return {
+        success: false,
+        canMerge: false,
+        reasons: ["Not an Azure DevOps repo"],
+        allowedMethods: ["squash"],
+        defaultMethod: "squash",
+        checks: { requiredTotal: 0, passed: 0, pending: 0, failed: 0 },
+        error: "Not an Azure DevOps repo",
+      };
+    }
+    const client = getAdoClient();
+    if (!client) {
+      return {
+        success: false,
+        canMerge: false,
+        reasons: ["Azure DevOps provider is disabled"],
+        allowedMethods: ["squash"],
+        defaultMethod: "squash",
+        checks: { requiredTotal: 0, passed: 0, pending: 0, failed: 0 },
+        error: "Azure DevOps provider is disabled",
+      };
+    }
+    return client.getMergeReadiness({
+      project: ado.project,
+      repo: ado.repo,
+      prNumber,
+    });
+  },
+
+  async deleteBranch({ ref, branchName }): Promise<DeleteBranchResult> {
+    const ado = ensureAdo(ref);
+    if (!ado) return { success: false, error: "Not an Azure DevOps repo" };
+    const client = getAdoClient();
+    if (!client) {
+      return { success: false, error: "Azure DevOps provider is disabled" };
+    }
+    return client.deleteBranch({
+      project: ado.project,
+      repo: ado.repo,
+      branchName,
     });
   },
 

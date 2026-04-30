@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { PullRequestMergeReadiness } from "@/lib/github/client";
+import type { PullRequestMergeReadiness } from "@/lib/git-providers/types";
+
+mock.module("server-only", () => ({}));
 
 type AuthSession = { user: { id: string } } | null;
 
@@ -11,6 +13,7 @@ type SessionRecord = {
   repoName: string | null;
   prNumber: number | null;
   prStatus: "open" | "merged" | "closed" | null;
+  repoProvider?: "github" | "azure_devops";
 };
 
 let authSession: AuthSession = { user: { id: "user-1" } };
@@ -146,6 +149,15 @@ function registerRouteMocks() {
       deleteCalls.push(input);
       return deleteResult;
     },
+    parseGitHubUrl: (url: string) => {
+      const match = url.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+      return match ? { owner: match[1], repo: match[2] } : null;
+    },
+    closePullRequest: async () => ({ success: false }),
+    createPullRequest: async () => ({ success: false }),
+    enablePullRequestAutoMerge: async () => ({ success: false }),
+    findPullRequestByBranch: async () => ({ found: false }),
+    getPullRequestStatus: async () => ({ success: true, status: "open" }),
   }));
 }
 
@@ -173,6 +185,7 @@ describe("/api/sessions/[sessionId]/merge", () => {
       repoName: "rocket",
       prNumber: 42,
       prStatus: "open",
+      repoProvider: "github",
     };
 
     readinessResult = {

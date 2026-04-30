@@ -3,8 +3,10 @@ import {
   requireOwnedSessionWithSandboxGuard,
 } from "@/app/api/sessions/_lib/session-context";
 import { updateSession } from "@/lib/db/sessions";
-import { findPullRequestByBranch } from "@/lib/github/client";
-import { getUserGitHubToken } from "@/lib/github/user-token";
+import {
+  getProviderForSession,
+  sessionToRepoRef,
+} from "@/lib/git-providers/resolve";
 import { connectSandboxForSession } from "@/lib/sandbox/connect";
 import { isSandboxActive } from "@/lib/sandbox/utils";
 
@@ -102,8 +104,18 @@ export async function POST(req: Request) {
     const currentPrNumber = branchChanged ? null : sessionRecord.prNumber;
     const currentPrStatus = branchChanged ? null : sessionRecord.prStatus;
 
-    // 3. Check GitHub for an existing PR on this branch
-    const token = await getUserGitHubToken(authResult.userId);
+    // 3. Check the provider for an existing PR on this branch
+    const provider = getProviderForSession(sessionRecord);
+    const ref = sessionToRepoRef(sessionRecord);
+    if (!ref) {
+      return Response.json({
+        branch,
+        prNumber: currentPrNumber ?? null,
+        prStatus: currentPrStatus ?? null,
+      });
+    }
+
+    const token = await provider.getCloneToken(authResult.userId);
     if (!token) {
       // No token available -- return existing PR info if we have it
       return Response.json({
@@ -113,9 +125,8 @@ export async function POST(req: Request) {
       });
     }
 
-    const prResult = await findPullRequestByBranch({
-      owner: sessionRecord.repoOwner,
-      repo: sessionRecord.repoName,
+    const prResult = await provider.findPullRequestByBranch({
+      ref,
       branchName: branch,
       token,
     });

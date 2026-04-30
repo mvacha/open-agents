@@ -3,12 +3,13 @@ import {
   requireOwnedSession,
 } from "@/app/api/sessions/_lib/session-context";
 import {
-  getPullRequestMergeReadiness,
-  type PullRequestCheckRun,
-  type PullRequestMergeMethod,
-} from "@/lib/github/client";
-import { getUserGitHubToken } from "@/lib/github/user-token";
-import { sessionToRepoRef } from "@/lib/git-providers/resolve";
+  getProviderForSession,
+  sessionToRepoRef,
+} from "@/lib/git-providers/resolve";
+import type {
+  PullRequestCheckRun,
+  PullRequestMergeMethod,
+} from "@/lib/git-providers/types";
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
@@ -105,7 +106,8 @@ export async function GET(_req: Request, context: RouteContext) {
       ? `${sessionRecord.repoOwner}/${sessionRecord.repoName}`
       : null;
 
-  if (!sessionRecord.cloneUrl || !repoIdentifier || !sessionRecord.repoOwner) {
+  const ref = sessionToRepoRef(sessionRecord);
+  if (!ref || !repoIdentifier) {
     return Response.json(
       buildUnavailableResponse(
         "Session is not linked to a git repository",
@@ -114,19 +116,6 @@ export async function GET(_req: Request, context: RouteContext) {
       ) satisfies MergeReadinessResponse,
     );
   }
-
-  const ref = sessionToRepoRef(sessionRecord);
-  if (ref?.provider === "azure_devops") {
-    return Response.json(
-      buildUnavailableResponse(
-        "Merging Azure DevOps pull requests from this app is not supported. Merge in Azure DevOps directly.",
-        sessionRecord.prNumber,
-        repoIdentifier,
-      ) satisfies MergeReadinessResponse,
-    );
-  }
-
-  const cloneUrl = sessionRecord.cloneUrl;
 
   if (!sessionRecord.prNumber) {
     return Response.json(
@@ -158,19 +147,20 @@ export async function GET(_req: Request, context: RouteContext) {
     );
   }
 
-  const token = await getUserGitHubToken(authResult.userId);
+  const provider = getProviderForSession(sessionRecord);
+  const token = await provider.getCloneToken(authResult.userId);
   if (!token) {
     return Response.json(
       buildUnavailableResponse(
-        "No GitHub token available for this repository",
+        "No token available for this repository",
         sessionRecord.prNumber,
         repoIdentifier,
       ) satisfies MergeReadinessResponse,
     );
   }
 
-  const readiness = await getPullRequestMergeReadiness({
-    repoUrl: cloneUrl,
+  const readiness = await provider.getMergeReadiness({
+    ref,
     prNumber: sessionRecord.prNumber,
     token,
   });
