@@ -8,6 +8,10 @@ interface TestSessionRecord {
   userId: string;
   lifecycleVersion: number;
   sandboxState: { type: "vercel" };
+  repoOwner?: string | null;
+  repoName?: string | null;
+  repoProvider?: "github" | "azure_devops";
+  repoMeta?: unknown;
   vercelProjectId: string | null;
   vercelProjectName: string | null;
   vercelTeamId: string | null;
@@ -36,6 +40,7 @@ interface ConnectConfig {
     };
   };
   options?: {
+    env?: Record<string, string>;
     githubToken?: string;
     gitUser?: {
       email?: string;
@@ -56,12 +61,27 @@ const writeFileCalls: Array<{ path: string; content: string }> = [];
 const execCalls: Array<{ command: string; cwd: string; timeoutMs: number }> =
   [];
 const dotenvSyncCalls: Array<Record<string, unknown>> = [];
+const defaultBranchCalls: Array<{ branch?: string }> = [];
+const fetchConfigCalls: Array<{ branch: string }> = [];
 
 let sessionRecord: TestSessionRecord;
 let currentVercelAuthInfo: TestVercelAuthInfo | null;
 let currentGitHubToken: string | null;
 let currentDotenvContent: string;
 let currentDotenvError: Error | null;
+let currentGitProviderToken: string | null;
+let currentDefaultBranch: string;
+let currentOpenAgentsConfig:
+  | {
+      kind: "missing";
+    }
+  | {
+      kind: "ok";
+      config: {
+        dev: Array<{ name: string; run: string; port: number; cwd: string }>;
+        env?: Record<string, string>;
+      };
+    };
 
 mock.module("@/lib/session/get-server-session", () => ({
   getServerSession: async () => ({
@@ -108,6 +128,7 @@ mock.module("@/lib/vercel/projects", () => ({
 mock.module("@/lib/db/sessions", () => ({
   getChatsBySessionId: async () => [],
   getSessionById: async () => sessionRecord,
+  markSessionHibernatingIfNoActiveStreams: async () => sessionRecord,
   updateSession: async (sessionId: string, patch: Record<string, unknown>) => {
     updateCalls.push({ sessionId, patch });
     return {
@@ -117,6 +138,63 @@ mock.module("@/lib/db/sessions", () => ({
   },
 }));
 
+const testGitProvider = {
+  getCloneToken: async () => currentGitProviderToken,
+  getDefaultBranch: async () => {
+    defaultBranchCalls.push({});
+    return currentDefaultBranch;
+  },
+  buildAuthRemoteUrl: ({
+    token,
+    ref,
+  }: {
+    token: string;
+    ref: { provider: string; org?: string; project?: string; repo?: string };
+  }) =>
+    ref.provider === "azure_devops"
+      ? `https://token:${token}@dev.azure.com/${ref.org}/${ref.project}/_git/${ref.repo}`
+      : undefined,
+};
+
+mock.module("@/lib/git-providers/resolve", () => ({
+  getProviderById: () => testGitProvider,
+  getProviderForSession: () => testGitProvider,
+  sessionToRepoRef: (session: {
+    repoOwner?: string | null;
+    repoName?: string | null;
+    repoProvider?: "github" | "azure_devops";
+    repoMeta?: unknown;
+  }) => {
+    if (!(session.repoOwner && session.repoName)) {
+      return null;
+    }
+    if (session.repoProvider === "azure_devops") {
+      const meta = session.repoMeta as { project?: string } | null;
+      return {
+        provider: "azure_devops",
+        org: session.repoOwner,
+        project: meta?.project ?? "Project",
+        repo: session.repoName,
+      };
+    }
+    return {
+      provider: "github",
+      owner: session.repoOwner,
+      repo: session.repoName,
+    };
+  },
+}));
+
+mock.module("@/lib/open-agents-config/fetch", () => ({
+  envFromConfig: (config: { env?: Record<string, string> }) => config.env,
+  fetchOpenAgentsConfigFromProvider: async (args: { branch: string }) => {
+    fetchConfigCalls.push({ branch: args.branch });
+    return currentOpenAgentsConfig;
+  },
+  uniquePortsFromConfig: (config: { dev: Array<{ port: number }> }) =>
+    Array.from(new Set(config.dev.map((process) => process.port))),
+}));
+
 mock.module("@/lib/sandbox/lifecycle-kick", () => ({
   kickSandboxLifecycleWorkflow: (input: KickCall) => {
     kickCalls.push(input);
@@ -124,7 +202,14 @@ mock.module("@/lib/sandbox/lifecycle-kick", () => ({
 }));
 
 mock.module("@open-harness/sandbox", () => ({
-  connectSandbox: async (config: ConnectConfig) => {
+  connectSandbox: async (
+    configOrState: ConnectConfig | ConnectConfig["state"],
+    options?: ConnectConfig["options"],
+  ) => {
+    const config =
+      "state" in configOrState
+        ? configOrState
+        : { state: configOrState, options };
     connectConfigs.push(config);
 
     return {
@@ -173,6 +258,8 @@ describe("/api/sandbox lifecycle kicks", () => {
     writeFileCalls.length = 0;
     execCalls.length = 0;
     dotenvSyncCalls.length = 0;
+    defaultBranchCalls.length = 0;
+    fetchConfigCalls.length = 0;
     currentVercelAuthInfo = {
       token: "vercel-token",
       expiresAt: 1_700_000_000,
@@ -181,6 +268,9 @@ describe("/api/sandbox lifecycle kicks", () => {
     currentGitHubToken = null;
     currentDotenvContent = 'API_KEY="secret"\n';
     currentDotenvError = null;
+    currentGitProviderToken = "provider-token";
+    currentDefaultBranch = "main";
+    currentOpenAgentsConfig = { kind: "missing" };
     sessionRecord = {
       id: "session-1",
       userId: "user-1",
@@ -267,6 +357,62 @@ describe("/api/sandbox lifecycle kicks", () => {
       },
     });
     expect(connectConfigs[0]?.state.source).not.toHaveProperty("token");
+  });
+
+  test("loads config env from the default branch when creating a new branch", async () => {
+    const { POST } = await routeModulePromise;
+
+    currentGitHubToken = "github-user-token";
+    currentDefaultBranch = "trunk";
+    currentOpenAgentsConfig = {
+      kind: "ok",
+      config: {
+        dev: [{ name: "web", run: "bun run dev", port: 4321, cwd: "." }],
+        env: {
+          VITE_PUBLIC_API_URL: "https://api.example.test",
+        },
+      },
+    };
+    sessionRecord = {
+      ...sessionRecord,
+      repoOwner: "acme",
+      repoName: "private-repo",
+      repoProvider: "github",
+      repoMeta: null,
+    };
+
+    const response = await POST(
+      new Request("http://localhost/api/sandbox", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "session-1",
+          repoUrl: "https://github.com/acme/private-repo",
+          branch: "open-agents/session-1",
+          isNewBranch: true,
+          sandboxType: "vercel",
+        }),
+      }),
+    );
+
+    expect(response.ok).toBe(true);
+    expect(defaultBranchCalls).toHaveLength(1);
+    expect(fetchConfigCalls).toEqual([{ branch: "trunk" }]);
+    expect(connectConfigs[0]).toMatchObject({
+      state: {
+        type: "vercel",
+        source: {
+          repo: "https://github.com/acme/private-repo",
+          newBranch: "open-agents/session-1",
+        },
+      },
+      options: {
+        env: {
+          VITE_PUBLIC_API_URL: "https://api.example.test",
+        },
+      },
+    });
+    expect(connectConfigs[0]?.state.source?.branch).toBeUndefined();
   });
 
   test("new vercel sandbox does not sync linked Development env vars while code is commented out", async () => {

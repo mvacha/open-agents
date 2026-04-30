@@ -464,6 +464,7 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
 
     // Calculate SDK timeout with buffer for beforeStop hook.
     const sdkTimeout = effectiveTimeout + TIMEOUT_BUFFER_MS;
+    const sourceToken = source?.token ?? githubToken;
 
     const createBaseConfig = {
       ...(name ? { name } : {}),
@@ -494,12 +495,12 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
     } else if (source) {
       sdk = await VercelSandboxSDK.create({
         ...createBaseConfig,
-        source: source.token
+        source: sourceToken
           ? {
               type: "git",
               url: source.url,
               username: "x-access-token",
-              password: source.token,
+              password: sourceToken,
               ...(source.branch && { revision: source.branch }),
             }
           : {
@@ -519,8 +520,8 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
     // clone will fail. Consider using git init + remote add + fetch + checkout
     // instead, which works regardless of existing directory contents.
     if (source && baseSnapshotId) {
-      const cloneUrl = source.token
-        ? (buildAuthenticatedGitHubUrl(source.url, source.token) ?? source.url)
+      const cloneUrl = sourceToken
+        ? (buildAuthenticatedGitHubUrl(source.url, sourceToken) ?? source.url)
         : source.url;
       const cloneArgs = ["clone"];
       if (source.branch) {
@@ -555,10 +556,10 @@ ${hostLine}${portLines}${runtimeEnvLine}`;
     // We modify the remote URL to embed credentials directly (standard CI/CD approach)
     // TODO: When baseSnapshotId is set, the token is already embedded in the
     // clone URL above, making this set-url call redundant for that path.
-    if (source?.token) {
+    if (sourceToken && source) {
       const authenticatedUrl = buildAuthenticatedGitHubUrl(
         source.url,
-        source.token,
+        sourceToken,
       );
       if (authenticatedUrl) {
         await sdk.runCommand({

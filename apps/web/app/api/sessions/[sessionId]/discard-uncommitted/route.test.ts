@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
+mock.module("server-only", () => ({}));
+
 type ExecResult = {
   success: boolean;
   exitCode: number;
@@ -110,6 +112,10 @@ mock.module("@/app/api/sessions/_lib/session-context", () => ({
 
 mock.module("@open-harness/sandbox", () => ({
   connectSandbox: connectSandboxMock,
+}));
+
+mock.module("@/lib/sandbox/connect", () => ({
+  connectSandboxForSession: connectSandboxMock,
 }));
 
 let routeImportVersion = 0;

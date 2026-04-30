@@ -311,6 +311,38 @@ export async function updateSession(
   return session ? normalizeSessionRecord(session) : session;
 }
 
+export async function markSessionHibernatingIfNoActiveStreams(params: {
+  sessionId: string;
+  lifecycleRunId: string | null;
+}) {
+  const lifecycleRunMatch =
+    params.lifecycleRunId === null
+      ? isNull(sessions.lifecycleRunId)
+      : eq(sessions.lifecycleRunId, params.lifecycleRunId);
+
+  const [session] = await db
+    .update(sessions)
+    .set({
+      lifecycleState: "hibernating",
+      lifecycleError: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(sessions.id, params.sessionId),
+        lifecycleRunMatch,
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${chats}
+          WHERE ${chats.sessionId} = ${sessions.id}
+            AND ${chats.activeStreamId} IS NOT NULL
+        )`,
+      ),
+    )
+    .returning();
+
+  return session ? normalizeSessionRecord(session) : session;
+}
+
 /**
  * Atomically claims the session lifecycle lease when no run is currently
  * recorded. Returns true when the claim succeeds.
@@ -464,6 +496,44 @@ export async function compareAndSetChatActiveStreamId(
     .update(chats)
     .set({ activeStreamId: nextStreamId })
     .where(and(eq(chats.id, chatId), activeStreamMatch))
+    .returning({ id: chats.id });
+
+  return Boolean(updated);
+}
+
+/**
+ * Claims a chat stream only when the owning session is not in the middle of
+ * hibernation. This closes the race where a new workflow starts while the
+ * sandbox lifecycle evaluator is stopping the sandbox.
+ */
+export async function compareAndSetChatActiveStreamIdForRunnableSession(
+  chatId: string,
+  expectedStreamId: string | null,
+  nextStreamId: string | null,
+) {
+  const activeStreamMatch =
+    expectedStreamId === null
+      ? isNull(chats.activeStreamId)
+      : eq(chats.activeStreamId, expectedStreamId);
+
+  const [updated] = await db
+    .update(chats)
+    .set({ activeStreamId: nextStreamId })
+    .where(
+      and(
+        eq(chats.id, chatId),
+        activeStreamMatch,
+        sql`EXISTS (
+          SELECT 1 FROM ${sessions}
+          WHERE ${sessions.id} = ${chats.sessionId}
+            AND ${sessions.status} <> 'archived'
+            AND (
+              ${sessions.lifecycleState} IS NULL
+              OR ${sessions.lifecycleState} NOT IN ('hibernating', 'hibernated', 'archived')
+            )
+        )`,
+      ),
+    )
     .returning({ id: chats.id });
 
   return Boolean(updated);

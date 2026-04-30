@@ -32,8 +32,12 @@ export function HomePage({ hasSessionCookie, lastRepo }: HomePageProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const handleCreateSession = async (input: {
+    repoProvider?: "github" | "azure_devops";
     repoOwner?: string;
     repoName?: string;
+    repoMeta?:
+      | { provider: "github" }
+      | { provider: "azure_devops"; project: string };
     branch?: string;
     cloneUrl?: string;
     isNewBranch: boolean;
@@ -45,8 +49,10 @@ export function HomePage({ hasSessionCookie, lastRepo }: HomePageProps) {
     setIsCreating(true);
     try {
       const { session: createdSession, chat } = await createSession({
+        repoProvider: input.repoProvider,
         repoOwner: input.repoOwner,
         repoName: input.repoName,
+        repoMeta: input.repoMeta,
         branch: input.branch,
         cloneUrl: input.cloneUrl,
         isNewBranch: input.isNewBranch,

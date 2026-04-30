@@ -4,6 +4,7 @@ import type { SandboxState } from "@open-harness/sandbox";
 import {
   getChatsBySessionId,
   getSessionById,
+  markSessionHibernatingIfNoActiveStreams,
   updateSession,
 } from "@/lib/db/sessions";
 import {
@@ -202,10 +203,13 @@ export async function evaluateSandboxLifecycle(
   }
 
   try {
-    await updateSession(sessionId, {
-      lifecycleState: "hibernating",
-      lifecycleError: null,
+    const hibernatingSession = await markSessionHibernatingIfNoActiveStreams({
+      sessionId,
+      lifecycleRunId: session.lifecycleRunId,
     });
+    if (!hibernatingSession) {
+      return { action: "skipped", reason: "active-workflow" };
+    }
 
     const sandbox = await connectSandboxForSession(sandboxState, sessionId);
 

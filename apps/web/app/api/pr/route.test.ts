@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
+mock.module("server-only", () => ({}));
+
 type AuthSession = { user: { id: string } } | null;
 
 type SessionRecord = {
   id: string;
   userId: string;
   branch: string | null;
+  repoProvider?: "github" | "azure_devops";
+  repoOwner?: string | null;
+  repoName?: string | null;
+  repoMeta?: unknown;
 };
 
 type CreatePullRequestResult = {
@@ -89,6 +95,8 @@ function registerRouteMocks() {
       autoMergeCalls.push(input);
       return enableAutoMergeResult;
     },
+    findPullRequestByBranch: async () => ({ found: false }),
+    getPullRequestStatus: async () => ({ success: true, status: "open" }),
   }));
 }
 
@@ -220,6 +228,124 @@ describe("/api/pr", () => {
     expect(createCalls).toHaveLength(1);
     expect(autoMergeCalls).toHaveLength(0);
     expect(updateCalls).toHaveLength(0);
+  });
+
+  test("creates an Azure DevOps pull request via the provider abstraction", async () => {
+    sessionRecord = {
+      id: "session-1",
+      userId: "user-1",
+      branch: "feature/ado",
+      repoProvider: "azure_devops",
+      repoOwner: "myorg",
+      repoName: "my-repo",
+      repoMeta: { provider: "azure_devops", project: "MyProject" },
+    };
+
+    const adoCalls: Array<Record<string, unknown>> = [];
+
+    mock.module("@/lib/git-providers/resolve", () => ({
+      getProviderForSession: () => ({
+        getCloneToken: async () => "ado-pat",
+        createPullRequest: async (input: Record<string, unknown>) => {
+          adoCalls.push(input);
+          return {
+            success: true,
+            prNumber: 42,
+            prUrl:
+              "https://dev.azure.com/myorg/MyProject/_git/my-repo/pullrequest/42",
+          };
+        },
+      }),
+      sessionToRepoRef: () => ({
+        provider: "azure_devops",
+        org: "myorg",
+        project: "MyProject",
+        repo: "my-repo",
+      }),
+    }));
+
+    const { POST } = await loadRouteModule();
+
+    const response = await POST(
+      new Request("http://localhost/api/pr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "session-1",
+          repoUrl: "https://dev.azure.com/myorg/MyProject/_git/my-repo",
+          branchName: "feature/ado",
+          title: "Ship ADO PR",
+          body: "Description",
+          baseBranch: "main",
+        }),
+      }),
+    );
+
+    const body = (await response.json()) as {
+      success?: boolean;
+      prNumber?: number;
+      prUrl?: string;
+      prStatus?: string;
+      error?: string;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.prNumber).toBe(42);
+    expect(body.prStatus).toBe("open");
+    expect(body.prUrl).toContain("dev.azure.com");
+    expect(adoCalls).toHaveLength(1);
+    expect(adoCalls[0]).toMatchObject({
+      branchName: "feature/ado",
+      baseBranch: "main",
+      title: "Ship ADO PR",
+      token: "ado-pat",
+    });
+    expect(updateCalls).toEqual([
+      {
+        sessionId: "session-1",
+        patch: { prNumber: 42, prStatus: "open" },
+      },
+    ]);
+    // GitHub-only path must not run.
+    expect(createCalls).toHaveLength(0);
+    expect(autoMergeCalls).toHaveLength(0);
+  });
+
+  test("rejects auto-merge for Azure DevOps", async () => {
+    sessionRecord = {
+      id: "session-1",
+      userId: "user-1",
+      branch: "feature/ado",
+      repoProvider: "azure_devops",
+      repoOwner: "myorg",
+      repoName: "my-repo",
+      repoMeta: { provider: "azure_devops", project: "MyProject" },
+    };
+
+    const { POST } = await loadRouteModule();
+
+    const response = await POST(
+      new Request("http://localhost/api/pr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "session-1",
+          repoUrl: "https://dev.azure.com/myorg/MyProject/_git/my-repo",
+          branchName: "feature/ado",
+          title: "Ship ADO PR",
+          baseBranch: "main",
+          enableAutoMerge: true,
+        }),
+      }),
+    );
+
+    const body = (await response.json()) as { error?: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe(
+      "Auto-merge is not supported for Azure DevOps repositories",
+    );
   });
 
   test("rejects auto-merge for draft pull requests", async () => {

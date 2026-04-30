@@ -1,14 +1,20 @@
 import "server-only";
+import { isAzureDevOpsEnabled } from "@/lib/git-providers/feature-flags";
 import { getAdoClient } from "./client";
 import { getAzureDevOpsConfig } from "./config";
 
 export type AdoConnectionStatus =
   | { enabled: false }
-  | { enabled: true; healthy: true }
+  | { enabled: true; healthy: true; org: string }
   | {
       enabled: true;
       healthy: false;
-      reason: "pat_invalid" | "pat_insufficient_scope" | "network_error";
+      reason:
+        | "missing_org_or_pat"
+        | "pat_invalid"
+        | "pat_insufficient_scope"
+        | "network_error";
+      org: string | null;
     };
 
 interface CacheEntry {
@@ -38,6 +44,18 @@ export async function getAdoConnectionStatus(
 
   const config = getAzureDevOpsConfig();
   if (!config.enabled) {
+    // Distinguish "flag not set" from "flag set but org/PAT missing" so the
+    // settings UI can surface a warning chip instead of hiding the section.
+    if (isAzureDevOpsEnabled()) {
+      const status: AdoConnectionStatus = {
+        enabled: true,
+        healthy: false,
+        reason: "missing_org_or_pat",
+        org: process.env.AZURE_DEVOPS_ORG?.trim() || null,
+      };
+      cache = { expiresAt: Date.now() + CACHE_TTL_MS, status };
+      return status;
+    }
     const status: AdoConnectionStatus = { enabled: false };
     cache = { expiresAt: Date.now() + CACHE_TTL_MS, status };
     return status;
@@ -47,11 +65,12 @@ export async function getAdoConnectionStatus(
   const result = await probe();
 
   const status: AdoConnectionStatus = result.ok
-    ? { enabled: true, healthy: true }
+    ? { enabled: true, healthy: true, org: config.org }
     : {
         enabled: true,
         healthy: false,
         reason: result.reason ?? "network_error",
+        org: config.org,
       };
 
   cache = { expiresAt: Date.now() + CACHE_TTL_MS, status };

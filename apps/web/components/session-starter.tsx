@@ -17,7 +17,10 @@ import { useVercelRepoProjects } from "@/hooks/use-vercel-repo-projects";
 import type { VercelProjectSelection } from "@/lib/vercel/types";
 import { cn } from "@/lib/utils";
 import { BranchSelectorCompact } from "./branch-selector-compact";
-import { RepoSelectorCompact } from "./repo-selector-compact";
+import {
+  RepoSelectorCompact,
+  type RepoSelection,
+} from "./repo-selector-compact";
 import {
   DEFAULT_SANDBOX_TYPE,
   SANDBOX_OPTIONS,
@@ -30,8 +33,12 @@ type SessionMode = "empty" | "repo";
 
 interface SessionStarterProps {
   onSubmit: (session: {
+    repoProvider?: "github" | "azure_devops";
     repoOwner?: string;
     repoName?: string;
+    repoMeta?:
+      | { provider: "github" }
+      | { provider: "azure_devops"; project: string };
     branch?: string;
     cloneUrl?: string;
     isNewBranch: boolean;
@@ -52,10 +59,11 @@ export function SessionStarter({
   const [mode, setMode] = useState<SessionMode>(() =>
     lastRepo ? "repo" : "empty",
   );
-  const [selectedOwner, setSelectedOwner] = useState(
-    () => lastRepo?.owner ?? "",
+  const [selection, setSelection] = useState<RepoSelection | null>(() =>
+    lastRepo
+      ? { provider: "github", owner: lastRepo.owner, repo: lastRepo.repo }
+      : null,
   );
-  const [selectedRepo, setSelectedRepo] = useState(() => lastRepo?.repo ?? "");
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
   const [isNewBranch, setIsNewBranch] = useState(!!lastRepo);
   const [vercelProjectChoice, setVercelProjectChoice] = useState<
@@ -77,12 +85,17 @@ export function SessionStarter({
   const sandboxName =
     SANDBOX_OPTIONS.find((s) => s.id === sandboxType)?.name ?? sandboxType;
 
+  const isGithubSelection = selection?.provider === "github";
+  const githubOwner = isGithubSelection ? selection.owner : "";
+  const githubRepo = isGithubSelection ? selection.repo : "";
+
   const shouldLoadVercelProjects =
     mode === "repo" &&
+    isGithubSelection &&
     !githubConnectionLoading &&
     !reconnectRequired &&
-    !!selectedOwner &&
-    !!selectedRepo &&
+    !!githubOwner &&
+    !!githubRepo &&
     session?.authProvider === "vercel";
   const {
     data: repoProjects,
@@ -90,8 +103,8 @@ export function SessionStarter({
     error: repoProjectsError,
   } = useVercelRepoProjects({
     enabled: shouldLoadVercelProjects,
-    repoOwner: selectedOwner,
-    repoName: selectedRepo,
+    repoOwner: githubOwner,
+    repoName: githubRepo,
   });
 
   useEffect(() => {
@@ -111,17 +124,8 @@ export function SessionStarter({
     setVercelProjectChoice(undefined);
   }, [repoProjects, repoProjectsLoading, shouldLoadVercelProjects]);
 
-  const handleRepoSelect = (owner: string, repo: string) => {
-    setSelectedOwner(owner);
-    setSelectedRepo(repo);
-    setSelectedBranch(null);
-    setIsNewBranch(false);
-    setVercelProjectChoice(undefined);
-  };
-
-  const handleRepoClear = () => {
-    setSelectedOwner("");
-    setSelectedRepo("");
+  const handleSelectionChange = (next: RepoSelection | null) => {
+    setSelection(next);
     setSelectedBranch(null);
     setIsNewBranch(false);
     setVercelProjectChoice(undefined);
@@ -134,15 +138,15 @@ export function SessionStarter({
 
   const handleModeChange = (newMode: SessionMode) => {
     setMode(newMode);
-    if (newMode === "empty") handleRepoClear();
+    if (newMode === "empty") handleSelectionChange(null);
   };
 
-  const isRepoSelectionComplete =
-    mode !== "repo" || (selectedOwner && selectedRepo);
+  const isRepoSelectionComplete = mode !== "repo" || !!selection;
   const isVercelLookupPending =
     mode === "repo" &&
-    !!selectedOwner &&
-    !!selectedRepo &&
+    isGithubSelection &&
+    !!githubOwner &&
+    !!githubRepo &&
     (sessionLoading || (shouldLoadVercelProjects && repoProjectsLoading));
   const requiresVercelChoice =
     shouldLoadVercelProjects &&
@@ -155,7 +159,9 @@ export function SessionStarter({
   const controlsDisabled = isLoading || preferencesLoading;
   const isSubmitDisabled =
     controlsDisabled ||
-    (mode === "repo" && (githubConnectionLoading || reconnectRequired)) ||
+    (mode === "repo" &&
+      isGithubSelection &&
+      (githubConnectionLoading || reconnectRequired)) ||
     !isRepoSelectionComplete ||
     isVercelLookupPending ||
     requiresVercelChoice;
@@ -163,14 +169,35 @@ export function SessionStarter({
   const effectiveAutoCreatePr = autoCreatePr ?? defaultAutoCreatePr;
   const showVercelProjectSection =
     mode === "repo" &&
+    isGithubSelection &&
     !githubConnectionLoading &&
     !reconnectRequired &&
-    !!selectedOwner &&
-    !!selectedRepo &&
+    !!githubOwner &&
+    !!githubRepo &&
     (sessionLoading || session?.authProvider === "vercel");
 
   const handleSubmit = () => {
     if (isSubmitDisabled) return;
+
+    if (mode === "repo" && selection?.provider === "azure_devops") {
+      onSubmit({
+        repoProvider: "azure_devops",
+        repoOwner: selection.org,
+        repoName: selection.repo,
+        repoMeta: {
+          provider: "azure_devops",
+          project: selection.project,
+        },
+        cloneUrl: selection.webUrl,
+        branch: undefined,
+        isNewBranch: true,
+        sandboxType,
+        autoCommitPush: effectiveAutoCommitPush,
+        autoCreatePr: effectiveAutoCommitPush ? effectiveAutoCreatePr : false,
+        vercelProject: null,
+      });
+      return;
+    }
 
     let vercelProject: VercelProjectSelection | null | undefined;
     if (shouldLoadVercelProjects) {
@@ -189,12 +216,15 @@ export function SessionStarter({
     }
 
     onSubmit({
-      repoOwner: mode === "repo" ? selectedOwner || undefined : undefined,
-      repoName: mode === "repo" ? selectedRepo || undefined : undefined,
+      repoProvider: "github",
+      repoOwner:
+        mode === "repo" && isGithubSelection ? githubOwner : undefined,
+      repoName:
+        mode === "repo" && isGithubSelection ? githubRepo : undefined,
       branch: mode === "repo" ? selectedBranch || undefined : undefined,
       cloneUrl:
-        mode === "repo" && selectedOwner && selectedRepo
-          ? `https://github.com/${selectedOwner}/${selectedRepo}`
+        mode === "repo" && isGithubSelection && githubOwner && githubRepo
+          ? `https://github.com/${githubOwner}/${githubRepo}`
           : undefined,
       isNewBranch: mode === "repo" ? isNewBranch : false,
       sandboxType,
@@ -205,9 +235,11 @@ export function SessionStarter({
   };
 
   const buttonLabel =
-    mode === "repo" && selectedOwner && selectedRepo
-      ? `Start with ${selectedOwner}/${selectedRepo}`
-      : "Start session";
+    mode === "repo" && selection?.provider === "azure_devops"
+      ? `Start with ${selection.project}/${selection.repo}`
+      : mode === "repo" && isGithubSelection && githubOwner && githubRepo
+        ? `Start with ${githubOwner}/${githubRepo}`
+        : "Start session";
 
   return (
     <div
@@ -249,17 +281,17 @@ export function SessionStarter({
         {mode === "repo" && (
           <div className="flex flex-col gap-3">
             <RepoSelectorCompact
-              selectedOwner={selectedOwner}
-              selectedRepo={selectedRepo}
-              onSelect={handleRepoSelect}
+              selection={selection}
+              onSelect={handleSelectionChange}
             />
-            {selectedOwner &&
-              selectedRepo &&
+            {isGithubSelection &&
+              githubOwner &&
+              githubRepo &&
               !githubConnectionLoading &&
               !reconnectRequired && (
                 <BranchSelectorCompact
-                  owner={selectedOwner}
-                  repo={selectedRepo}
+                  owner={githubOwner}
+                  repo={githubRepo}
                   value={selectedBranch}
                   isNewBranch={isNewBranch}
                   onChange={handleBranchChange}

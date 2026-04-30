@@ -15,6 +15,7 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import useSWR, { useSWRConfig } from "swr";
+import type { AdoConnectionStatus } from "@/lib/azure-devops/connection-status";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -338,6 +339,7 @@ export function AccountsSection() {
 
   return (
     <div className="space-y-6">
+      <AzureDevOpsSection />
       <div className="rounded-lg border border-border/50 bg-muted/10">
         <div className="flex items-center justify-between border-b border-border/50 px-4 py-3">
           <div className="flex items-center gap-2.5">
@@ -663,5 +665,126 @@ function ConnectedState({
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+function AzureDevOpsIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path d="M0 8.877L2.247 5.91l8.405-3.416V.022l7.37 5.393L2.966 8.338v8.225L0 15.707zm24-4.45v14.651l-5.753 4.9-9.303-3.057v3.056l-5.978-7.416 15.057 1.798V5.415z" />
+    </svg>
+  );
+}
+
+function AdoStatusChip({ status }: { status: AdoConnectionStatus }) {
+  if (status.enabled === false) return null;
+  if (status.healthy) {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-green-500/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-green-600 dark:text-green-400">
+        <Check className="size-2.5" />
+        Connected
+      </span>
+    );
+  }
+  const message =
+    status.reason === "missing_org_or_pat"
+      ? "Set AZURE_DEVOPS_ORG and AZURE_DEVOPS_PAT"
+      : status.reason === "pat_invalid"
+        ? "PAT invalid"
+        : status.reason === "pat_insufficient_scope"
+          ? "PAT scope insufficient"
+          : "Cannot reach Azure DevOps";
+  const tone =
+    status.reason === "pat_invalid"
+      ? "bg-red-500/10 text-red-600 dark:text-red-400"
+      : "bg-amber-500/10 text-amber-600 dark:text-amber-400";
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none ${tone}`}
+    >
+      <TriangleAlert className="size-2.5" />
+      {message}
+    </span>
+  );
+}
+
+function AzureDevOpsSection() {
+  const { data, error, isLoading, mutate } = useSWR<AdoConnectionStatus>(
+    "/api/azure-devops/connection-status",
+    fetcher,
+  );
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const fresh = await fetcher<AdoConnectionStatus>(
+        "/api/azure-devops/connection-status?fresh=1",
+      );
+      await mutate(fresh, { revalidate: false });
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [mutate]);
+
+  if (isLoading && !data) return null;
+  if (error && !data) return null;
+  if (!data || data.enabled === false) return null;
+
+  const helpText =
+    data.healthy === false
+      ? data.reason === "missing_org_or_pat"
+        ? "Azure DevOps is enabled in this deployment but credentials are missing. Set AZURE_DEVOPS_ORG and AZURE_DEVOPS_PAT in the server environment."
+        : data.reason === "pat_invalid"
+          ? "The configured Azure DevOps PAT was rejected. Generate a new PAT and update AZURE_DEVOPS_PAT."
+          : data.reason === "pat_insufficient_scope"
+            ? "The configured PAT does not have the required scopes (Code: Read & Write, Pull Request: Read & Write)."
+            : "Could not reach Azure DevOps. Check network/firewall rules from the server."
+      : null;
+
+  return (
+    <div className="rounded-lg border border-border/50 bg-muted/10">
+      <div className="flex items-center justify-between border-b border-border/50 px-4 py-3">
+        <div className="flex items-center gap-2.5">
+          <AzureDevOpsIcon className="h-5 w-5 text-[#0078D4]" />
+          <span className="text-sm font-medium">Azure DevOps</span>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleRefresh}
+          disabled={isRefreshing || isLoading}
+          className="h-7 w-7 p-0"
+        >
+          <RefreshCw
+            className={`size-3.5 ${isRefreshing ? "animate-spin" : ""}`}
+          />
+        </Button>
+      </div>
+      <div className="space-y-3 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">
+              {data.org ?? "Not configured"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Configured via server environment variables
+            </p>
+          </div>
+          <AdoStatusChip status={data} />
+        </div>
+        {helpText && (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-muted-foreground">
+            <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-500" />
+            <p>{helpText}</p>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

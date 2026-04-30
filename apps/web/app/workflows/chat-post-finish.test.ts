@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { WebAgentUIMessage } from "@/app/types";
 
+mock.module("server-only", () => ({}));
+
 // ── Mutable spy state ──────────────────────────────────────────────
 
 let createChatMessageIfNotExistsResult: unknown = { id: "msg-1" };
@@ -100,6 +102,10 @@ mock.module("@/lib/sandbox/lifecycle", () => ({
 
 mock.module("@open-harness/sandbox", () => ({
   connectSandbox: spies.connectSandbox,
+}));
+
+mock.module("@/lib/sandbox/connect", () => ({
+  connectSandboxForSession: spies.connectSandbox,
 }));
 
 mock.module("@/lib/diff/compute-diff", () => ({

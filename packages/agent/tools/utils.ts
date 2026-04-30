@@ -86,10 +86,13 @@ export async function getSandbox(
     );
   }
 
-  return connectSandbox(
-    context.sandbox.state,
-    context.sandbox.hooks ? { hooks: context.sandbox.hooks } : {},
-  );
+  if (context.sandbox.hooks) {
+    return connectSandbox(context.sandbox.state, {
+      hooks: context.sandbox.hooks,
+    });
+  }
+
+  return connectSandbox(context.sandbox.state);
 }
 
 /**

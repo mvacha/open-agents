@@ -4,6 +4,7 @@ import {
   CheckIcon,
   ChevronDown,
   ExternalLink,
+  Loader2,
   LockIcon,
   RefreshCw,
   SearchIcon,
@@ -13,23 +14,25 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { z } from "zod";
 import {
+  Command,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from "@/components/ui/command";
+import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
-  Command,
-  CommandGroup,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
-import {
-  InstallationRepo,
+  type InstallationRepo,
   useInstallationRepos,
 } from "@/hooks/use-installation-repos";
 import { useGitHubConnectionStatus } from "@/hooks/use-github-connection-status";
 import { useSession } from "@/hooks/use-session";
 import { buildGitHubReconnectUrl } from "@/lib/github/connection-status";
+import { fetcher } from "@/lib/swr";
 import { cn } from "@/lib/utils";
 
 function GitHubIcon({ className }: { className?: string }) {
@@ -41,6 +44,19 @@ function GitHubIcon({ className }: { className?: string }) {
       xmlns="http://www.w3.org/2000/svg"
     >
       <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
+    </svg>
+  );
+}
+
+function AzureDevOpsIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path d="M0 8.877L2.247 5.91l8.405-3.416V.022l7.37 5.393L2.966 8.338v8.225L0 15.707zm24-4.45v14.651l-5.753 4.9-9.303-3.057v3.056l-5.978-7.416 15.057 1.798V5.415z" />
     </svg>
   );
 }
@@ -59,7 +75,6 @@ function formatRelativeDate(dateString: string): string {
     const months = Math.floor(diffDays / 30);
     return months === 1 ? "1mo ago" : `${months}mo ago`;
   }
-  // Show as short date for older
   return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
@@ -85,10 +100,75 @@ const installationSchema = z.object({
 
 const installationsSchema = z.array(installationSchema);
 
+const adoConnectionStatusSchema = z.union([
+  z.object({ enabled: z.literal(false) }),
+  z.object({
+    enabled: z.literal(true),
+    healthy: z.literal(true),
+    org: z.string(),
+  }),
+  z.object({
+    enabled: z.literal(true),
+    healthy: z.literal(false),
+    reason: z.enum([
+      "missing_org_or_pat",
+      "pat_invalid",
+      "pat_insufficient_scope",
+      "network_error",
+    ]),
+    org: z.string().nullable(),
+  }),
+]);
+
+const adoProjectsResponseSchema = z.object({
+  org: z.string().nullable(),
+  projects: z.array(z.object({ id: z.string(), name: z.string() })),
+});
+
+const adoRepoSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  project: z.string(),
+  defaultBranch: z.string().nullable(),
+  webUrl: z.string(),
+});
+
+const adoReposResponseSchema = z.object({
+  repos: z.array(adoRepoSchema),
+});
+
+type AdoRepo = z.infer<typeof adoRepoSchema>;
+
+export type RepoSelection =
+  | { provider: "github"; owner: string; repo: string }
+  | {
+      provider: "azure_devops";
+      org: string;
+      project: string;
+      repo: string;
+      defaultBranch: string | null;
+      webUrl: string;
+    };
+
+type Scope =
+  | {
+      kind: "github";
+      key: string;
+      label: string;
+      installation: Installation;
+    }
+  | {
+      kind: "azure_devops";
+      key: string;
+      label: string;
+      org: string;
+      projectId: string;
+      projectName: string;
+    };
+
 interface RepoSelectorCompactProps {
-  selectedOwner: string;
-  selectedRepo: string;
-  onSelect: (owner: string, repo: string) => void;
+  selection: RepoSelection | null;
+  onSelect: (selection: RepoSelection | null) => void;
 }
 
 function getCurrentPathWithSearch(): string {
@@ -97,14 +177,31 @@ function getCurrentPathWithSearch(): string {
 
 async function fetchInstallations(): Promise<Installation[]> {
   const response = await fetch("/api/github/installations");
-  if (!response.ok) {
-    return [];
-  }
-
+  if (!response.ok) return [];
   const json = await response.json();
   const parsed = installationsSchema.safeParse(json);
-
   return parsed.success ? parsed.data : [];
+}
+
+async function fetchAdoStatus(url: string) {
+  const json = await fetcher<unknown>(url);
+  const parsed = adoConnectionStatusSchema.safeParse(json);
+  if (!parsed.success) throw new Error("Invalid ADO status response");
+  return parsed.data;
+}
+
+async function fetchAdoProjects(url: string) {
+  const json = await fetcher<unknown>(url);
+  const parsed = adoProjectsResponseSchema.safeParse(json);
+  if (!parsed.success) throw new Error("Invalid ADO projects response");
+  return parsed.data;
+}
+
+async function fetchAdoRepos(url: string) {
+  const json = await fetcher<unknown>(url);
+  const parsed = adoReposResponseSchema.safeParse(json);
+  if (!parsed.success) throw new Error("Invalid ADO repos response");
+  return parsed.data.repos;
 }
 
 function SkeletonRow() {
@@ -149,8 +246,7 @@ function GitHubActionCard({
 }
 
 export function RepoSelectorCompact({
-  selectedOwner,
-  selectedRepo,
+  selection,
   onSelect,
 }: RepoSelectorCompactProps) {
   const { hasGitHub, loading: sessionLoading } = useSession();
@@ -158,17 +254,13 @@ export function RepoSelectorCompact({
     enabled: hasGitHub,
   });
   const [ownerOpen, setOwnerOpen] = useState(false);
-  const [currentOwner, setCurrentOwner] = useState(selectedOwner);
+  const [currentScopeKey, setCurrentScopeKey] = useState<string | null>(null);
   const [repoSearch, setRepoSearch] = useState("");
   const [debouncedRepoSearch, setDebouncedRepoSearch] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const hasAutoSelectedRef = useRef(false);
-
   const startGitHubInstall = useCallback(() => {
-    const params = new URLSearchParams({
-      next: getCurrentPathWithSearch(),
-    });
+    const params = new URLSearchParams({ next: getCurrentPathWithSearch() });
     window.location.href = `/api/github/app/install?${params.toString()}`;
   }, []);
 
@@ -183,92 +275,193 @@ export function RepoSelectorCompact({
     fetchInstallations,
   );
 
-  const currentInstallation = installations.find(
-    (installation) => installation.accountLogin === currentOwner,
+  const { data: adoStatus } = useSWR(
+    "/api/azure-devops/connection-status",
+    fetchAdoStatus,
+  );
+  const adoEnabled = adoStatus?.enabled === true;
+  const adoOrg = adoEnabled ? adoStatus.org : null;
+
+  const { data: adoProjectsData } = useSWR(
+    adoEnabled ? "/api/azure-devops/projects" : null,
+    fetchAdoProjects,
+  );
+  const adoProjects = adoProjectsData?.projects ?? [];
+  const resolvedAdoOrg = adoOrg ?? adoProjectsData?.org ?? null;
+
+  const scopes = useMemo<Scope[]>(() => {
+    const items: Scope[] = installations.map((installation) => ({
+      kind: "github",
+      key: `gh:${installation.accountLogin}`,
+      label: installation.accountLogin,
+      installation,
+    }));
+    if (resolvedAdoOrg) {
+      for (const project of adoProjects) {
+        items.push({
+          kind: "azure_devops",
+          key: `ado:${project.id}`,
+          label: project.name,
+          org: resolvedAdoOrg,
+          projectId: project.id,
+          projectName: project.name,
+        });
+      }
+    }
+    return items;
+  }, [installations, adoProjects, resolvedAdoOrg]);
+
+  const currentScope = useMemo(
+    () =>
+      scopes.find((scope) => scope.key === currentScopeKey) ??
+      scopes[0] ??
+      null,
+    [scopes, currentScopeKey],
   );
 
+  // Auto-pick the first available scope when none is selected.
+  useEffect(() => {
+    if (currentScopeKey) return;
+    if (scopes[0]) setCurrentScopeKey(scopes[0].key);
+  }, [scopes, currentScopeKey]);
+
+  // Sync internal scope with external selection (when parent changes it).
+  const lastSelectionKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    let key: string | null = null;
+    if (selection?.provider === "github") {
+      key = `gh:${selection.owner}`;
+    } else if (selection?.provider === "azure_devops") {
+      const proj = adoProjects.find((p) => p.name === selection.project);
+      if (proj) key = `ado:${proj.id}`;
+    }
+    if (key && key !== lastSelectionKeyRef.current) {
+      lastSelectionKeyRef.current = key;
+      setCurrentScopeKey(key);
+    }
+  }, [selection, adoProjects]);
+
+  // GitHub repos
+  const githubInstallationId =
+    currentScope?.kind === "github"
+      ? currentScope.installation.installationId
+      : null;
   const {
-    repos,
-    isLoading: reposLoading,
-    error: reposError,
-    refresh: refreshRepos,
+    repos: githubRepos,
+    isLoading: githubReposLoading,
+    error: githubReposError,
+    refresh: refreshGithubRepos,
   } = useInstallationRepos({
-    installationId: currentInstallation?.installationId ?? null,
+    installationId: githubInstallationId,
     query: debouncedRepoSearch,
     limit: 25,
   });
 
-  // Sort repos: by updated_at desc if available, otherwise alphabetical
-  const sortedRepos = useMemo(() => {
-    const hasAnyDates = repos.some((r) => r.updated_at);
+  // ADO repos
+  const adoReposUrl =
+    currentScope?.kind === "azure_devops"
+      ? `/api/azure-devops/projects/${encodeURIComponent(
+          currentScope.projectId,
+        )}/repos${
+          debouncedRepoSearch
+            ? `?q=${encodeURIComponent(debouncedRepoSearch)}`
+            : ""
+        }`
+      : null;
+  const {
+    data: adoReposData,
+    isLoading: adoReposLoading,
+    error: adoReposError,
+    mutate: mutateAdoRepos,
+  } = useSWR<AdoRepo[]>(adoReposUrl, fetchAdoRepos);
+  const adoRepos = adoReposData ?? [];
+
+  const sortedGithubRepos = useMemo(() => {
+    const hasAnyDates = githubRepos.some((r) => r.updated_at);
     if (hasAnyDates) {
-      return [...repos].sort((a, b) => {
+      return [...githubRepos].sort((a, b) => {
         const dateA = a.updated_at ? new Date(a.updated_at).getTime() : 0;
         const dateB = b.updated_at ? new Date(b.updated_at).getTime() : 0;
         return dateB - dateA;
       });
     }
-    return [...repos].sort((a, b) =>
+    return [...githubRepos].sort((a, b) =>
       a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
     );
-  }, [repos]);
+  }, [githubRepos]);
+
+  const sortedAdoRepos = useMemo(
+    () =>
+      [...adoRepos].sort((a, b) =>
+        a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
+      ),
+    [adoRepos],
+  );
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      await refreshRepos();
-    } catch (refreshError) {
-      console.error("Failed to refresh repositories:", refreshError);
+      if (currentScope?.kind === "github") {
+        await refreshGithubRepos();
+      } else if (currentScope?.kind === "azure_devops") {
+        await mutateAdoRepos();
+      }
     } finally {
       setIsRefreshing(false);
     }
-  }, [refreshRepos]);
-
-  // Auto-select first owner when data loads (only once)
-  useEffect(() => {
-    if (installations[0] && !currentOwner && !hasAutoSelectedRef.current) {
-      hasAutoSelectedRef.current = true;
-      setCurrentOwner(installations[0].accountLogin);
-    }
-  }, [installations, currentOwner]);
-
-  const lastSelectedOwnerRef = useRef(selectedOwner);
-
-  // Sync currentOwner with selectedOwner prop when the parent changes it.
-  useEffect(() => {
-    if (selectedOwner === lastSelectedOwnerRef.current) {
-      return;
-    }
-
-    lastSelectedOwnerRef.current = selectedOwner;
-    setCurrentOwner(selectedOwner);
-  }, [selectedOwner]);
+  }, [currentScope, refreshGithubRepos, mutateAdoRepos]);
 
   useEffect(() => {
     const timeoutId = setTimeout(() => {
       setDebouncedRepoSearch(repoSearch.trim());
     }, 200);
-
     return () => clearTimeout(timeoutId);
   }, [repoSearch]);
 
   useEffect(() => {
     setRepoSearch("");
-  }, [currentOwner]);
+  }, [currentScopeKey]);
 
-  const handleRepoSelect = (repo: InstallationRepo) => {
-    onSelect(currentOwner, repo.name);
+  const handleScopeSelect = (scope: Scope) => {
+    setCurrentScopeKey(scope.key);
+    setOwnerOpen(false);
+    // Clear repo selection when switching scope
+    if (selection) onSelect(null);
   };
 
-  const handleDeselect = () => {
-    onSelect(selectedOwner, "");
+  const handleGithubRepoSelect = (repo: InstallationRepo) => {
+    if (currentScope?.kind !== "github") return;
+    onSelect({
+      provider: "github",
+      owner: currentScope.installation.accountLogin,
+      repo: repo.name,
+    });
   };
 
-  const isInitialLoading = installationsLoading && installations.length === 0;
-  const hasSelection = selectedOwner && selectedRepo;
+  const handleAdoRepoSelect = (repo: AdoRepo) => {
+    if (currentScope?.kind !== "azure_devops") return;
+    onSelect({
+      provider: "azure_devops",
+      org: currentScope.org,
+      project: repo.project,
+      repo: repo.name,
+      defaultBranch: repo.defaultBranch,
+      webUrl: repo.webUrl,
+    });
+  };
 
-  // Not connected to GitHub
-  if (!sessionLoading && !hasGitHub) {
+  const handleDeselect = () => onSelect(null);
+
+  const isInitialLoading =
+    (installationsLoading && installations.length === 0) ||
+    (adoEnabled && !adoProjectsData);
+  const hasSelection = !!selection;
+
+  // Empty/error states only matter when no provider has anything to pick.
+  const noScopesAvailable =
+    !installationsLoading && !installations.length && !adoEnabled;
+
+  if (!sessionLoading && !hasGitHub && !adoEnabled) {
     return (
       <GitHubActionCard
         title="Install GitHub App"
@@ -279,7 +472,7 @@ export function RepoSelectorCompact({
     );
   }
 
-  if (reconnectRequired) {
+  if (reconnectRequired && !adoEnabled) {
     return (
       <GitHubActionCard
         title="Reconnect GitHub"
@@ -290,8 +483,7 @@ export function RepoSelectorCompact({
     );
   }
 
-  // No installations
-  if (!installationsLoading && installations.length === 0) {
+  if (noScopesAvailable) {
     return (
       <GitHubActionCard
         title="Install GitHub App"
@@ -302,91 +494,65 @@ export function RepoSelectorCompact({
     );
   }
 
-  // Collapsed state: repo is selected
-  if (hasSelection) {
-    const selectedRepoData = repos.find((r) => r.name === selectedRepo);
+  // Collapsed state: a repo is selected
+  if (hasSelection && selection) {
+    const isGithubSelection = selection.provider === "github";
+    const githubMatch = isGithubSelection
+      ? githubRepos.find((r) => r.name === selection.repo)
+      : null;
 
     return (
       <div className="flex flex-col gap-0">
         <div className="flex items-center gap-0 overflow-hidden rounded-lg border border-border/70 dark:border-white/10">
-          {/* Org dropdown (still interactive) */}
           <Popover open={ownerOpen} onOpenChange={setOwnerOpen}>
             <PopoverTrigger asChild>
               <button
                 type="button"
                 className="flex shrink-0 items-center gap-2 border-r border-border/70 bg-background/80 px-3 py-2.5 text-sm transition-colors hover:bg-accent dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/[0.06]"
               >
-                <GitHubIcon className="size-4 shrink-0" />
+                {isGithubSelection ? (
+                  <GitHubIcon className="size-4 shrink-0" />
+                ) : (
+                  <AzureDevOpsIcon className="size-4 shrink-0 text-[#0078D4]" />
+                )}
                 <span className="max-w-[140px] truncate font-medium">
-                  {selectedOwner}
+                  {isGithubSelection ? selection.owner : selection.project}
                 </span>
                 <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-[220px] p-0" align="start">
-              <Command>
-                <CommandList>
-                  <CommandGroup>
-                    {installations.map((installation) => (
-                      <CommandItem
-                        key={installation.installationId}
-                        value={installation.accountLogin}
-                        onSelect={() => {
-                          setCurrentOwner(installation.accountLogin);
-                          setOwnerOpen(false);
-                          // Deselect repo when switching owner
-                          if (installation.accountLogin !== selectedOwner) {
-                            onSelect(installation.accountLogin, "");
-                          }
-                        }}
-                      >
-                        <GitHubIcon className="size-3.5" />
-                        <span className="truncate">
-                          {installation.accountLogin}
-                        </span>
-                        <CheckIcon
-                          className={cn(
-                            "ml-auto size-3.5",
-                            currentOwner === installation.accountLogin
-                              ? "opacity-100"
-                              : "opacity-0",
-                          )}
-                        />
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                  <div className="border-t border-border/70 p-1 dark:border-white/10">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        startGitHubInstall();
-                        setOwnerOpen(false);
-                      }}
-                      className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                    >
-                      <ExternalLink className="size-3.5" />
-                      Add organization
-                    </button>
-                  </div>
-                </CommandList>
-              </Command>
-            </PopoverContent>
+            <ScopeMenu
+              scopes={scopes}
+              currentScopeKey={currentScope?.key ?? null}
+              onScopeSelect={handleScopeSelect}
+              onAddGitHubOrg={() => {
+                startGitHubInstall();
+                setOwnerOpen(false);
+              }}
+              hasGitHub={hasGitHub}
+              isLoading={isInitialLoading}
+            />
           </Popover>
 
-          {/* Selected repo display */}
           <div className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5">
-            <span className="truncate text-sm font-medium">{selectedRepo}</span>
-            {selectedRepoData?.private && (
+            <span className="truncate text-sm font-medium">
+              {selection.repo}
+            </span>
+            {githubMatch?.private && (
               <LockIcon className="size-3 shrink-0 text-muted-foreground" />
             )}
-            {selectedRepoData?.updated_at && (
+            {githubMatch?.updated_at && (
               <span className="shrink-0 text-xs text-muted-foreground">
-                · {formatRelativeDate(selectedRepoData.updated_at)}
+                · {formatRelativeDate(githubMatch.updated_at)}
+              </span>
+            )}
+            {!isGithubSelection && selection.defaultBranch && (
+              <span className="shrink-0 text-xs text-muted-foreground">
+                · {selection.defaultBranch}
               </span>
             )}
           </div>
 
-          {/* Change button */}
           <button
             type="button"
             onClick={handleDeselect}
@@ -399,76 +565,155 @@ export function RepoSelectorCompact({
     );
   }
 
-  // Expanded state: no selection, show full list
+  // Expanded state
+  const scopeIcon =
+    currentScope?.kind === "azure_devops" ? (
+      <AzureDevOpsIcon className="size-4 shrink-0 text-[#0078D4]" />
+    ) : (
+      <GitHubIcon className="size-4 shrink-0" />
+    );
+
+  const repoListContent =
+    currentScope?.kind === "azure_devops" ? (
+      adoReposLoading ? (
+        <div className="flex h-full flex-col divide-y divide-border/50 dark:divide-white/[0.06]">
+          {Array.from({ length: 6 }).map((_, idx) => (
+            <SkeletonRow key={idx} />
+          ))}
+          <div className="flex-1" />
+        </div>
+      ) : adoReposError ? (
+        <div className="flex h-full items-center justify-center px-4 text-sm text-muted-foreground">
+          Failed to load repositories.
+        </div>
+      ) : sortedAdoRepos.length === 0 ? (
+        <div className="flex h-full items-center justify-center px-4 text-sm text-muted-foreground">
+          No repositories found.
+        </div>
+      ) : (
+        <div className="divide-y divide-border/50 dark:divide-white/[0.06]">
+          {sortedAdoRepos.slice(0, 25).map((repo) => (
+            <div
+              key={repo.id}
+              className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/30 dark:hover:bg-white/[0.03]"
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <span className="truncate text-sm font-medium">
+                  {repo.name}
+                </span>
+                {repo.defaultBranch && (
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    · {repo.defaultBranch}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => handleAdoRepoSelect(repo)}
+                className="shrink-0 rounded-md border border-border/70 bg-background px-3 py-1 text-xs font-medium text-foreground transition-colors hover:bg-accent dark:border-white/20 dark:bg-white/[0.06] dark:hover:bg-white/10"
+              >
+                Select
+              </button>
+            </div>
+          ))}
+        </div>
+      )
+    ) : currentScope?.kind === "github" ? (
+      githubReposLoading ? (
+        <div className="flex h-full flex-col divide-y divide-border/50 dark:divide-white/[0.06]">
+          {Array.from({ length: 6 }).map((_, idx) => (
+            <SkeletonRow key={idx} />
+          ))}
+          <div className="flex-1" />
+        </div>
+      ) : githubReposError ? (
+        <div className="flex h-full items-center justify-center px-4 text-sm text-muted-foreground">
+          {githubReposError}
+        </div>
+      ) : sortedGithubRepos.length === 0 ? (
+        <div className="flex h-full items-center justify-center px-4 text-sm text-muted-foreground">
+          No repositories found.
+        </div>
+      ) : (
+        <div className="divide-y divide-border/50 dark:divide-white/[0.06]">
+          {sortedGithubRepos.slice(0, 25).map((repo) => (
+            <div
+              key={repo.full_name}
+              className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/30 dark:hover:bg-white/[0.03]"
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <span className="truncate text-sm font-medium">
+                  {repo.name}
+                </span>
+                {repo.private && (
+                  <LockIcon className="size-3 shrink-0 text-muted-foreground" />
+                )}
+                {repo.updated_at && (
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    · {formatRelativeDate(repo.updated_at)}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => handleGithubRepoSelect(repo)}
+                className="shrink-0 rounded-md border border-border/70 bg-background px-3 py-1 text-xs font-medium text-foreground transition-colors hover:bg-accent dark:border-white/20 dark:bg-white/[0.06] dark:hover:bg-white/10"
+              >
+                Select
+              </button>
+            </div>
+          ))}
+          {sortedGithubRepos.length === 25 && !debouncedRepoSearch && (
+            <div className="px-4 py-2.5 text-center text-xs text-muted-foreground">
+              Showing first 25 results. Use search to narrow.
+            </div>
+          )}
+        </div>
+      )
+    ) : (
+      <div className="flex h-full items-center justify-center px-4 text-sm text-muted-foreground">
+        Select a source to see repositories.
+      </div>
+    );
+
+  const githubManageUrl =
+    currentScope?.kind === "github"
+      ? currentScope.installation.installationUrl
+      : null;
+
   return (
     <div className="flex flex-col gap-0">
-      {/* Top bar: org dropdown + search */}
       <div className="flex items-stretch gap-0 overflow-hidden rounded-t-lg border border-border/70 dark:border-white/10">
-        {/* Org dropdown */}
         <Popover open={ownerOpen} onOpenChange={setOwnerOpen}>
           <PopoverTrigger asChild>
             <button
               type="button"
               className="flex shrink-0 items-center gap-2 border-r border-border/70 bg-background/80 px-3 py-2 text-sm transition-colors hover:bg-accent dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/[0.06]"
             >
-              <GitHubIcon className="size-4 shrink-0" />
+              {scopeIcon}
               {isInitialLoading ? (
                 <div className="h-4 w-[80px] animate-pulse rounded bg-muted-foreground/10" />
               ) : (
                 <span className="max-w-[140px] truncate font-medium">
-                  {currentOwner || "Select account"}
+                  {currentScope?.label ?? "Select source"}
                 </span>
               )}
               <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
             </button>
           </PopoverTrigger>
-          <PopoverContent className="w-[220px] p-0" align="start">
-            <Command>
-              <CommandList>
-                <CommandGroup>
-                  {installations.map((installation) => (
-                    <CommandItem
-                      key={installation.installationId}
-                      value={installation.accountLogin}
-                      onSelect={() => {
-                        setCurrentOwner(installation.accountLogin);
-                        setOwnerOpen(false);
-                      }}
-                    >
-                      <GitHubIcon className="size-3.5" />
-                      <span className="truncate">
-                        {installation.accountLogin}
-                      </span>
-                      <CheckIcon
-                        className={cn(
-                          "ml-auto size-3.5",
-                          currentOwner === installation.accountLogin
-                            ? "opacity-100"
-                            : "opacity-0",
-                        )}
-                      />
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-                <div className="border-t border-border/70 p-1 dark:border-white/10">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      startGitHubInstall();
-                      setOwnerOpen(false);
-                    }}
-                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                  >
-                    <ExternalLink className="size-3.5" />
-                    Add organization
-                  </button>
-                </div>
-              </CommandList>
-            </Command>
-          </PopoverContent>
+          <ScopeMenu
+            scopes={scopes}
+            currentScopeKey={currentScope?.key ?? null}
+            onScopeSelect={handleScopeSelect}
+            onAddGitHubOrg={() => {
+              startGitHubInstall();
+              setOwnerOpen(false);
+            }}
+            hasGitHub={hasGitHub}
+            isLoading={isInitialLoading}
+          />
         </Popover>
 
-        {/* Search input */}
         <div className="flex flex-1 items-center gap-2 bg-background/80 px-3 dark:bg-white/[0.03]">
           <SearchIcon className="size-3.5 shrink-0 text-muted-foreground" />
           <input
@@ -490,70 +735,15 @@ export function RepoSelectorCompact({
         </div>
       </div>
 
-      {/* Repo list */}
       <div className="h-[280px] overflow-y-auto rounded-b-lg border border-t-0 border-border/70 dark:border-white/10">
-        {reposLoading ? (
-          <div className="flex h-full flex-col divide-y divide-border/50 dark:divide-white/[0.06]">
-            <SkeletonRow />
-            <SkeletonRow />
-            <SkeletonRow />
-            <SkeletonRow />
-            <SkeletonRow />
-            <SkeletonRow />
-            <div className="flex-1" />
-          </div>
-        ) : reposError ? (
-          <div className="flex h-full items-center justify-center px-4 text-sm text-muted-foreground">
-            {reposError}
-          </div>
-        ) : sortedRepos.length === 0 ? (
-          <div className="flex h-full items-center justify-center px-4 text-sm text-muted-foreground">
-            No repositories found.
-          </div>
-        ) : (
-          <div className="divide-y divide-border/50 dark:divide-white/[0.06]">
-            {sortedRepos.slice(0, 25).map((repo) => (
-              <div
-                key={repo.full_name}
-                className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/30 dark:hover:bg-white/[0.03]"
-              >
-                <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <span className="truncate text-sm font-medium">
-                    {repo.name}
-                  </span>
-                  {repo.private && (
-                    <LockIcon className="size-3 shrink-0 text-muted-foreground" />
-                  )}
-                  {repo.updated_at && (
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      · {formatRelativeDate(repo.updated_at)}
-                    </span>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleRepoSelect(repo)}
-                  className="shrink-0 rounded-md border border-border/70 bg-background px-3 py-1 text-xs font-medium text-foreground transition-colors hover:bg-accent dark:border-white/20 dark:bg-white/[0.06] dark:hover:bg-white/10"
-                >
-                  Select
-                </button>
-              </div>
-            ))}
-            {sortedRepos.length === 25 && !debouncedRepoSearch && (
-              <div className="px-4 py-2.5 text-center text-xs text-muted-foreground">
-                Showing first 25 results. Use search to narrow.
-              </div>
-            )}
-          </div>
-        )}
+        {repoListContent}
       </div>
 
-      {/* Footer: manage access + refresh */}
       <div className="mt-1.5 flex items-center justify-between px-1 text-xs">
         <div className="flex items-center gap-3">
-          {currentInstallation?.installationUrl && (
+          {githubManageUrl && (
             <Link
-              href={currentInstallation.installationUrl}
+              href={githubManageUrl}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
@@ -574,5 +764,104 @@ export function RepoSelectorCompact({
         </button>
       </div>
     </div>
+  );
+}
+
+function ScopeMenu({
+  scopes,
+  currentScopeKey,
+  onScopeSelect,
+  onAddGitHubOrg,
+  hasGitHub,
+  isLoading,
+}: {
+  scopes: Scope[];
+  currentScopeKey: string | null;
+  onScopeSelect: (scope: Scope) => void;
+  onAddGitHubOrg: () => void;
+  hasGitHub: boolean;
+  isLoading: boolean;
+}) {
+  const githubScopes = scopes.filter(
+    (scope): scope is Extract<Scope, { kind: "github" }> =>
+      scope.kind === "github",
+  );
+  const adoScopes = scopes.filter(
+    (scope): scope is Extract<Scope, { kind: "azure_devops" }> =>
+      scope.kind === "azure_devops",
+  );
+
+  return (
+    <PopoverContent className="w-[260px] p-0" align="start">
+      <Command>
+        <CommandList>
+          {isLoading && (
+            <div className="flex items-center justify-center gap-2 px-3 py-6 text-sm text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" />
+              <span>Loading sources...</span>
+            </div>
+          )}
+          {!isLoading && githubScopes.length > 0 && (
+            <CommandGroup heading={hasGitHub ? "GitHub" : undefined}>
+              {githubScopes.map((scope) => (
+                <CommandItem
+                  key={scope.key}
+                  value={scope.key}
+                  onSelect={() => onScopeSelect(scope)}
+                >
+                  <GitHubIcon className="size-3.5" />
+                  <span className="truncate">{scope.label}</span>
+                  <CheckIcon
+                    className={cn(
+                      "ml-auto size-3.5",
+                      currentScopeKey === scope.key
+                        ? "opacity-100"
+                        : "opacity-0",
+                    )}
+                  />
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+
+          {!isLoading && adoScopes.length > 0 && (
+            <>
+              {githubScopes.length > 0 && <CommandSeparator />}
+              <CommandGroup heading="Azure DevOps">
+                {adoScopes.map((scope) => (
+                  <CommandItem
+                    key={scope.key}
+                    value={scope.key}
+                    onSelect={() => onScopeSelect(scope)}
+                  >
+                    <AzureDevOpsIcon className="size-3.5 text-[#0078D4]" />
+                    <span className="truncate">{scope.label}</span>
+                    <CheckIcon
+                      className={cn(
+                        "ml-auto size-3.5",
+                        currentScopeKey === scope.key
+                          ? "opacity-100"
+                          : "opacity-0",
+                      )}
+                    />
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </>
+          )}
+        </CommandList>
+
+        <div className="border-t border-border/70 p-1 dark:border-white/10">
+          <button
+            type="button"
+            onClick={onAddGitHubOrg}
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          >
+            <ExternalLink className="size-3.5" />
+            Add GitHub organization
+          </button>
+        </div>
+      </Command>
+    </PopoverContent>
   );
 }

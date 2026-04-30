@@ -5,6 +5,10 @@ import {
   parseGitHubUrl,
 } from "@/lib/github/client";
 import { getUserGitHubToken } from "@/lib/github/user-token";
+import {
+  getProviderForSession,
+  sessionToRepoRef,
+} from "@/lib/git-providers/resolve";
 import { getServerSession } from "@/lib/session/get-server-session";
 
 interface CreatePRRequest {
@@ -92,17 +96,6 @@ export async function POST(req: Request) {
     );
   }
 
-  // Validate repoUrl format (GitHub URLs only)
-  const githubUrlPattern = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(\.git)?$/;
-  if (!githubUrlPattern.test(repoUrl)) {
-    return Response.json({ error: "Invalid repository URL" }, { status: 400 });
-  }
-
-  const parsedRepoUrl = parseGitHubUrl(repoUrl);
-  if (!parsedRepoUrl) {
-    return Response.json({ error: "Invalid repository URL" }, { status: 400 });
-  }
-
   // Validate branch names to prevent injection
   const safeBranchPattern = /^[\w\-/.]+$/;
   if (!safeBranchPattern.test(baseBranch)) {
@@ -121,16 +114,6 @@ export async function POST(req: Request) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (sessionRecord.repoProvider === "azure_devops") {
-    return Response.json(
-      {
-        error:
-          "Manual PR creation via this route is not supported for Azure DevOps sessions. Use auto-PR or open the PR in Azure DevOps.",
-      },
-      { status: 501 },
-    );
-  }
-
   const resolvedBranch = sessionRecord.branch ?? branchName;
 
   if (!resolvedBranch) {
@@ -139,6 +122,80 @@ export async function POST(req: Request) {
 
   if (!safeBranchPattern.test(resolvedBranch)) {
     return Response.json({ error: "Invalid branch name" }, { status: 400 });
+  }
+
+  // Azure DevOps: use the provider abstraction (no fork heads, no auto-merge,
+  // no compare-URL fallback — ADO doesn't have an analog).
+  if (sessionRecord.repoProvider === "azure_devops") {
+    if (enableAutoMerge) {
+      return Response.json(
+        { error: "Auto-merge is not supported for Azure DevOps repositories" },
+        { status: 400 },
+      );
+    }
+
+    const ref = sessionToRepoRef(sessionRecord);
+    if (!ref) {
+      return Response.json(
+        { error: "Invalid Azure DevOps repository configuration" },
+        { status: 400 },
+      );
+    }
+
+    const provider = getProviderForSession(sessionRecord);
+    const adoToken = await provider.getCloneToken(session.user.id);
+    if (!adoToken) {
+      return Response.json(
+        { error: "Azure DevOps is not configured" },
+        { status: 403 },
+      );
+    }
+
+    const result = await provider.createPullRequest({
+      ref,
+      branchName: resolvedBranch,
+      baseBranch,
+      title,
+      body: prBody || "",
+      isDraft,
+      token: adoToken,
+    });
+
+    if (!result.success) {
+      const error = result.error || "Failed to create pull request";
+      const isClientError =
+        error.includes("Invalid") ||
+        error.includes("already exists") ||
+        error.includes("not found") ||
+        error.includes("not connected");
+      return Response.json({ error }, { status: isClientError ? 400 : 502 });
+    }
+
+    const updatedSession = await updateSession(sessionId, {
+      prNumber: result.prNumber,
+      prStatus: "open",
+    });
+    if (!updatedSession) {
+      console.error(`Failed to update session ${sessionId} with PR info`);
+    }
+
+    return Response.json({
+      success: true,
+      prUrl: result.prUrl,
+      prNumber: result.prNumber,
+      prStatus: "open",
+    });
+  }
+
+  // Validate repoUrl format (GitHub URLs only)
+  const githubUrlPattern = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(\.git)?$/;
+  if (!githubUrlPattern.test(repoUrl)) {
+    return Response.json({ error: "Invalid repository URL" }, { status: 400 });
+  }
+
+  const parsedRepoUrl = parseGitHubUrl(repoUrl);
+  if (!parsedRepoUrl) {
+    return Response.json({ error: "Invalid repository URL" }, { status: 400 });
   }
 
   if (headOwner && !safeBranchPattern.test(headOwner)) {

@@ -5,6 +5,7 @@ import { start } from "workflow/api";
 import type { WebAgentUIMessage } from "@/app/types";
 import {
   compareAndSetChatActiveStreamId,
+  compareAndSetChatActiveStreamIdForRunnableSession,
   countUserMessagesByUserId,
   createChatMessageIfNotExists,
   getChatById,
@@ -261,7 +262,7 @@ export async function POST(req: Request) {
 
   // Atomically claim the activeStreamId slot. If another request raced us and
   // already set it, cancel the workflow we just started and reconnect instead.
-  const claimed = await compareAndSetChatActiveStreamId(
+  const claimed = await compareAndSetChatActiveStreamIdForRunnableSession(
     chatId,
     null,
     run.runId,

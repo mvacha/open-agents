@@ -37,6 +37,25 @@ const spies = {
   updateSession: mock(
     async (_sessionId: string, patch: Record<string, unknown>) => patch,
   ),
+  markSessionHibernatingIfNoActiveStreams: mock(
+    async (params: { sessionId: string; lifecycleRunId: string | null }) => {
+      if (chatsInSession.some((chat) => chat.activeStreamId !== null)) {
+        return undefined;
+      }
+      const patch = {
+        lifecycleState: "hibernating",
+        lifecycleError: null,
+      };
+      await spies.updateSession(params.sessionId, patch);
+      if (sessionRecord) {
+        sessionRecord = {
+          ...sessionRecord,
+          lifecycleState: "hibernating",
+        };
+      }
+      return sessionRecord as never;
+    },
+  ),
   connectSandbox: mock(async () => ({
     stop: stopSpy,
   })),
@@ -46,6 +65,8 @@ const spies = {
 mock.module("@/lib/db/sessions", () => ({
   getChatsBySessionId: spies.getChatsBySessionId,
   getSessionById: spies.getSessionById,
+  markSessionHibernatingIfNoActiveStreams:
+    spies.markSessionHibernatingIfNoActiveStreams,
   updateSession: spies.updateSession,
 }));
 

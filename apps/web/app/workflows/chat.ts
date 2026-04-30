@@ -822,18 +822,21 @@ const runAgentStep = async (
     let totalMessageUsage = existingTotalMessageUsage;
     let totalMessageCost = existingTotalMessageCost;
 
-    const agentOptionsWithLogHook: OpenHarnessAgentCallOptions = {
-      ...agentOptions,
-      sandbox: {
-        ...agentOptions.sandbox,
-        hooks: {
-          ...agentOptions.sandbox.hooks,
-          onLog:
-            agentOptions.sandbox.hooks?.onLog ??
-            makeSandboxLogHook(sessionId, "agent"),
-        },
-      },
-    };
+    const agentOptionsWithLogHook: OpenHarnessAgentCallOptions =
+      agentOptions.sandbox
+        ? {
+            ...agentOptions,
+            sandbox: {
+              ...agentOptions.sandbox,
+              hooks: {
+                ...agentOptions.sandbox.hooks,
+                onLog:
+                  agentOptions.sandbox.hooks?.onLog ??
+                  makeSandboxLogHook(sessionId, "agent"),
+              },
+            },
+          }
+        : agentOptions;
 
     const result = await webAgent.stream({
       messages,

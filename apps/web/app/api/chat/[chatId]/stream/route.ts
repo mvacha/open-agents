@@ -5,7 +5,7 @@ import {
   requireOwnedChatById,
 } from "@/app/api/chat/_lib/chat-context";
 import type { WebAgentUIMessage } from "@/app/types";
-import { updateChatActiveStreamId } from "@/lib/db/sessions";
+import { compareAndSetChatActiveStreamId } from "@/lib/db/sessions";
 import { createCancelableReadableStream } from "@/lib/chat/create-cancelable-readable-stream";
 
 type RouteContext = {
@@ -49,7 +49,7 @@ export async function GET(_request: Request, context: RouteContext) {
       status === "failed"
     ) {
       // Workflow is done — clear the stale activeStreamId.
-      await updateChatActiveStreamId(chatId, null);
+      await compareAndSetChatActiveStreamId(chatId, runId, null);
       return new Response(null, { status: 204 });
     }
 
@@ -60,7 +60,7 @@ export async function GET(_request: Request, context: RouteContext) {
     return createUIMessageStreamResponse({ stream });
   } catch {
     // Workflow run not found or inaccessible — clear stale ID.
-    await updateChatActiveStreamId(chatId, null);
+    await compareAndSetChatActiveStreamId(chatId, runId, null);
     return new Response(null, { status: 204 });
   }
 }

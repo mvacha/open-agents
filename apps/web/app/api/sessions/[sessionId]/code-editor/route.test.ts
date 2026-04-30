@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
+mock.module("server-only", () => ({}));
+
 const CODE_EDITOR_PID_FILE = "/tmp/open-harness-code-server.pid";
 const RUNNING_CODE_SERVER_PID = "9001";
 

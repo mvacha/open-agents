@@ -30,11 +30,7 @@ function readInitialActivePanel(): ActivePanel {
   }
   try {
     const raw = window.localStorage.getItem(ACTIVE_PANEL_STORAGE_KEY);
-    if (raw === null) {
-      // First visit: default to logs panel open.
-      return "logs";
-    }
-    if (raw === "null") {
+    if (raw === null || raw === "null") {
       return null;
     }
     if (isActivePanelValue(raw)) {

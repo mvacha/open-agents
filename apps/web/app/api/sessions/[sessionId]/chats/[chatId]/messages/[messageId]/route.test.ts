@@ -65,11 +65,11 @@ mock.module("@/app/api/sessions/_lib/session-context", () => ({
 let mockWorkflowStatus = "running";
 
 mock.module("@/lib/db/sessions", () => ({
+  compareAndSetChatActiveStreamId: async () => true,
   deleteChatMessageAndFollowing: async (chatId: string, messageId: string) => {
     deleteCalls.push({ chatId, messageId });
     return deleteResult;
   },
-  updateChatActiveStreamId: async () => {},
 }));
 
 mock.module("workflow/api", () => ({

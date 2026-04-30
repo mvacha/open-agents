@@ -15,6 +15,7 @@ import {
 import { getGitHubAccount } from "@/lib/db/accounts";
 import { updateSession } from "@/lib/db/sessions";
 import {
+  getProviderById,
   getProviderForSession,
   sessionToRepoRef,
 } from "@/lib/git-providers/resolve";
@@ -114,6 +115,7 @@ interface ResolvedSandboxConfig {
 async function resolveSandboxConfig(params: {
   sessionRecord: SessionRecord | undefined;
   branch: string;
+  isNewBranch: boolean;
   userId: string;
 }): Promise<ResolvedSandboxConfig> {
   const { sessionRecord, branch } = params;
@@ -143,10 +145,21 @@ async function resolveSandboxConfig(params: {
     return { ports: DEFAULT_SANDBOX_PORTS };
   }
 
+  let configBranch = branch;
+  if (params.isNewBranch) {
+    configBranch =
+      (await provider
+        .getDefaultBranch({
+          ref,
+          token,
+        })
+        .catch(() => null)) ?? "main";
+  }
+
   const result = await fetchOpenAgentsConfigFromProvider({
     provider,
     ref,
-    branch,
+    branch: configBranch,
     token,
   });
 
@@ -220,26 +233,7 @@ export async function POST(req: Request) {
     return Response.json({ error: "Access denied" }, { status: 403 });
   }
 
-  const githubToken = await getUserGitHubToken(session.user.id);
-
-  if (repoUrl) {
-    const parsedRepo = parseGitHubUrl(repoUrl);
-    if (!parsedRepo) {
-      return Response.json(
-        { error: "Invalid GitHub repository URL" },
-        { status: 400 },
-      );
-    }
-
-    if (!githubToken) {
-      return Response.json(
-        { error: "Connect GitHub to access repositories" },
-        { status: 403 },
-      );
-    }
-  }
-
-  // Validate session ownership
+  // Validate session ownership first so we know which provider to use.
   let sessionRecord: SessionRecord | undefined;
   if (sessionId) {
     const sessionContext = await requireOwnedSession({
@@ -251,6 +245,64 @@ export async function POST(req: Request) {
     }
 
     sessionRecord = sessionContext.sessionRecord;
+  }
+
+  const isAdoRepo =
+    sessionRecord?.repoProvider === "azure_devops" ||
+    (typeof repoUrl === "string" &&
+      /^https:\/\/dev\.azure\.com\//.test(repoUrl));
+
+  let resolvedRepoUrl = repoUrl;
+  let githubToken: string | null = null;
+  if (isAdoRepo) {
+    if (!sessionRecord) {
+      return Response.json(
+        { error: "Azure DevOps sandboxes require an existing session" },
+        { status: 400 },
+      );
+    }
+    const provider = getProviderById("azure_devops");
+    const ref = sessionToRepoRef(sessionRecord);
+    if (!ref || ref.provider !== "azure_devops") {
+      return Response.json(
+        { error: "Session is missing Azure DevOps repository metadata" },
+        { status: 400 },
+      );
+    }
+    const token = await provider.getCloneToken(session.user.id);
+    if (!token) {
+      return Response.json(
+        { error: "Azure DevOps is not configured on the server" },
+        { status: 403 },
+      );
+    }
+    const authUrl = provider.buildAuthRemoteUrl({ token, ref });
+    if (!authUrl) {
+      return Response.json(
+        { error: "Failed to build Azure DevOps clone URL" },
+        { status: 400 },
+      );
+    }
+    resolvedRepoUrl = authUrl;
+  } else {
+    githubToken = await getUserGitHubToken(session.user.id);
+
+    if (repoUrl) {
+      const parsedRepo = parseGitHubUrl(repoUrl);
+      if (!parsedRepo) {
+        return Response.json(
+          { error: "Invalid GitHub repository URL" },
+          { status: 400 },
+        );
+      }
+
+      if (!githubToken) {
+        return Response.json(
+          { error: "Connect GitHub to access repositories" },
+          { status: 403 },
+        );
+      }
+    }
   }
 
   const sandboxName = sessionId ? getSessionSandboxName(sessionId) : undefined;
@@ -273,9 +325,9 @@ export async function POST(req: Request) {
   // ============================================
   const startTime = Date.now();
 
-  const source = repoUrl
+  const source = resolvedRepoUrl
     ? {
-        repo: repoUrl,
+        repo: resolvedRepoUrl,
         branch: isNewBranch ? undefined : branch,
         newBranch: isNewBranch ? branch : undefined,
       }
@@ -284,6 +336,7 @@ export async function POST(req: Request) {
   const { ports, env, configWarning } = await resolveSandboxConfig({
     sessionRecord,
     branch,
+    isNewBranch,
     userId: session.user.id,
   });
 

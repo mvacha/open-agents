@@ -160,6 +160,8 @@ mock.module("./_lib/persist-tool-results", () => ({
 
 mock.module("@/lib/db/sessions", () => ({
   compareAndSetChatActiveStreamId: compareAndSetChatActiveStreamIdSpy,
+  compareAndSetChatActiveStreamIdForRunnableSession:
+    compareAndSetChatActiveStreamIdSpy,
   countUserMessagesByUserId: async () => existingUserMessageCount,
   createChatMessageIfNotExists: async () => undefined,
   getChatById: async () => chatRecord,

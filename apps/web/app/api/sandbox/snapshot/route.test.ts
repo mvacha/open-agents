@@ -57,6 +57,7 @@ mock.module("@/app/api/sessions/_lib/session-context", () => ({
 mock.module("@/lib/db/sessions", () => ({
   getChatsBySessionId: async () => [],
   getSessionById: async () => sessionRecord,
+  markSessionHibernatingIfNoActiveStreams: async () => sessionRecord,
   updateSession: async (_sessionId: string, patch: Record<string, unknown>) => {
     updateCalls.push(patch);
     sessionRecord = {
