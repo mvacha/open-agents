@@ -23,6 +23,7 @@ import { useBackgroundChatNotifications } from "@/hooks/use-background-chat-noti
 import { useSessions, type SessionWithUnread } from "@/hooks/use-sessions";
 import { useUserPreferences } from "@/hooks/use-user-preferences";
 import { DEFAULT_SANDBOX_TYPE } from "@/components/sandbox-selector-compact";
+import type { LastRepoInfo } from "@/lib/db/last-repo";
 import type { Session as AuthSession } from "@/lib/session/types";
 import { SessionsShellProvider } from "./sessions-shell-context";
 
@@ -33,7 +34,7 @@ type SessionsRouteShellProps = {
     sessions: SessionWithUnread[];
     archivedCount: number;
   };
-  lastRepo: { owner: string; repo: string } | null;
+  lastRepo: LastRepoInfo | null;
 };
 
 const RouteContentShell = memo(function RouteContentShell({

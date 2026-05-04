@@ -8,8 +8,7 @@ export async function GET(req: Request) {
   if (!session?.user) {
     return Response.json({ error: "Not authenticated" }, { status: 401 });
   }
-  const bypassCache =
-    new URL(req.url).searchParams.get("fresh") === "1";
+  const bypassCache = new URL(req.url).searchParams.get("fresh") === "1";
   const status = await getAdoConnectionStatus({ bypassCache });
   return Response.json(status);
 }

@@ -5,6 +5,7 @@ import {
   getArchivedSessionCountByUserId,
   getSessionsWithUnreadByUserId,
 } from "@/lib/db/sessions";
+import { getEnabledRepoProviders } from "@/lib/git-providers/feature-flags";
 import { getServerSession } from "@/lib/session/get-server-session";
 import { SessionsRouteShell } from "./sessions-route-shell";
 
@@ -20,10 +21,14 @@ export default async function SessionsLayout({
     redirect("/");
   }
 
+  const repoProviders = getEnabledRepoProviders();
   const [lastRepo, sessions, archivedCount] = await Promise.all([
     getLastRepoByUserId(session.user.id),
-    getSessionsWithUnreadByUserId(session.user.id, { status: "active" }),
-    getArchivedSessionCountByUserId(session.user.id),
+    getSessionsWithUnreadByUserId(session.user.id, {
+      status: "active",
+      repoProviders,
+    }),
+    getArchivedSessionCountByUserId(session.user.id, { repoProviders }),
   ]);
 
   return (

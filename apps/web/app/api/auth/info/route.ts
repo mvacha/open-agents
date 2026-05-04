@@ -3,12 +3,22 @@ import type { NextRequest } from "next/server";
 import { getGitHubAccount } from "@/lib/db/accounts";
 import { getInstallationsByUserId } from "@/lib/db/installations";
 import { userExists } from "@/lib/db/users";
+import {
+  isAzureDevOpsEnabled,
+  isGitHubEnabled,
+} from "@/lib/git-providers/feature-flags";
 import { SESSION_COOKIE_NAME } from "@/lib/session/constants";
 import { getSessionFromReq } from "@/lib/session/server";
 import type { SessionUserInfo } from "@/lib/session/types";
 import { getUserVercelToken } from "@/lib/vercel/token";
 
-const UNAUTHENTICATED: SessionUserInfo = { user: undefined };
+function unauthenticatedResponse(): SessionUserInfo {
+  return {
+    user: undefined,
+    gitHubProviderEnabled: isGitHubEnabled(),
+    azureDevOpsProviderEnabled: isAzureDevOpsEnabled(),
+  };
+}
 const VERCEL_USERINFO_URL = "https://api.vercel.com/login/oauth/userinfo";
 const VERCEL_USERINFO_TIMEOUT_MS = 3_000;
 
@@ -67,7 +77,7 @@ export async function GET(req: NextRequest) {
   const session = await getSessionFromReq(req);
 
   if (!session?.user?.id) {
-    return Response.json(UNAUTHENTICATED);
+    return Response.json(unauthenticatedResponse());
   }
 
   const vercelReconnectPromise =
@@ -90,7 +100,7 @@ export async function GET(req: NextRequest) {
   if (!exists) {
     const store = await cookies();
     store.delete(SESSION_COOKIE_NAME);
-    return Response.json(UNAUTHENTICATED);
+    return Response.json(unauthenticatedResponse());
   }
 
   const hasGitHubAccount = ghAccount !== null;
@@ -104,6 +114,8 @@ export async function GET(req: NextRequest) {
     hasGitHubAccount,
     hasGitHubInstallations,
     vercelReconnectRequired,
+    gitHubProviderEnabled: isGitHubEnabled(),
+    azureDevOpsProviderEnabled: isAzureDevOpsEnabled(),
   };
 
   return Response.json(data);

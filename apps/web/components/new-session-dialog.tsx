@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { SandboxType } from "@/components/sandbox-selector-compact";
 import { SessionStarter } from "@/components/session-starter";
+import type { LastRepoInfo } from "@/lib/db/last-repo";
 import type { VercelProjectSelection } from "@/lib/vercel/types";
 import {
   Dialog,
@@ -27,7 +28,7 @@ type CreateSessionInput = {
 interface NewSessionDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  lastRepo: { owner: string; repo: string } | null;
+  lastRepo: LastRepoInfo | null;
   createSession: (input: CreateSessionInput) => Promise<{
     session: { id: string };
     chat: { id: string };

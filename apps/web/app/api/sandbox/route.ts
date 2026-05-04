@@ -250,7 +250,7 @@ export async function POST(req: Request) {
   const isAdoRepo =
     sessionRecord?.repoProvider === "azure_devops" ||
     (typeof repoUrl === "string" &&
-      /^https:\/\/dev\.azure\.com\//.test(repoUrl));
+      repoUrl.startsWith('https://dev.azure.com/'));
 
   let resolvedRepoUrl = repoUrl;
   let githubToken: string | null = null;

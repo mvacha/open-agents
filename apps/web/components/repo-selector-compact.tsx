@@ -249,7 +249,11 @@ export function RepoSelectorCompact({
   selection,
   onSelect,
 }: RepoSelectorCompactProps) {
-  const { hasGitHub, loading: sessionLoading } = useSession();
+  const {
+    hasGitHub,
+    loading: sessionLoading,
+    gitHubProviderEnabled,
+  } = useSession();
   const { reconnectRequired } = useGitHubConnectionStatus({
     enabled: hasGitHub,
   });
@@ -461,7 +465,7 @@ export function RepoSelectorCompact({
   const noScopesAvailable =
     !installationsLoading && !installations.length && !adoEnabled;
 
-  if (!sessionLoading && !hasGitHub && !adoEnabled) {
+  if (!sessionLoading && !hasGitHub && !adoEnabled && gitHubProviderEnabled) {
     return (
       <GitHubActionCard
         title="Install GitHub App"
@@ -472,7 +476,7 @@ export function RepoSelectorCompact({
     );
   }
 
-  if (reconnectRequired && !adoEnabled) {
+  if (reconnectRequired && !adoEnabled && gitHubProviderEnabled) {
     return (
       <GitHubActionCard
         title="Reconnect GitHub"
@@ -483,7 +487,7 @@ export function RepoSelectorCompact({
     );
   }
 
-  if (noScopesAvailable) {
+  if (noScopesAvailable && gitHubProviderEnabled) {
     return (
       <GitHubActionCard
         title="Install GitHub App"
@@ -530,6 +534,7 @@ export function RepoSelectorCompact({
                 setOwnerOpen(false);
               }}
               hasGitHub={hasGitHub}
+              gitHubProviderEnabled={gitHubProviderEnabled}
               isLoading={isInitialLoading}
             />
           </Popover>
@@ -710,6 +715,7 @@ export function RepoSelectorCompact({
               setOwnerOpen(false);
             }}
             hasGitHub={hasGitHub}
+            gitHubProviderEnabled={gitHubProviderEnabled}
             isLoading={isInitialLoading}
           />
         </Popover>
@@ -773,6 +779,7 @@ function ScopeMenu({
   onScopeSelect,
   onAddGitHubOrg,
   hasGitHub,
+  gitHubProviderEnabled,
   isLoading,
 }: {
   scopes: Scope[];
@@ -780,6 +787,7 @@ function ScopeMenu({
   onScopeSelect: (scope: Scope) => void;
   onAddGitHubOrg: () => void;
   hasGitHub: boolean;
+  gitHubProviderEnabled: boolean;
   isLoading: boolean;
 }) {
   const githubScopes = scopes.filter(
@@ -851,16 +859,18 @@ function ScopeMenu({
           )}
         </CommandList>
 
-        <div className="border-t border-border/70 p-1 dark:border-white/10">
-          <button
-            type="button"
-            onClick={onAddGitHubOrg}
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-          >
-            <ExternalLink className="size-3.5" />
-            Add GitHub organization
-          </button>
-        </div>
+        {gitHubProviderEnabled && (
+          <div className="border-t border-border/70 p-1 dark:border-white/10">
+            <button
+              type="button"
+              onClick={onAddGitHubOrg}
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            >
+              <ExternalLink className="size-3.5" />
+              Add GitHub organization
+            </button>
+          </div>
+        )}
       </Command>
     </PopoverContent>
   );

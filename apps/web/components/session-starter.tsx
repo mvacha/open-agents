@@ -14,6 +14,7 @@ import { useGitHubConnectionStatus } from "@/hooks/use-github-connection-status"
 import { useSession } from "@/hooks/use-session";
 import { useUserPreferences } from "@/hooks/use-user-preferences";
 import { useVercelRepoProjects } from "@/hooks/use-vercel-repo-projects";
+import type { LastRepoInfo } from "@/lib/db/last-repo";
 import type { VercelProjectSelection } from "@/lib/vercel/types";
 import { cn } from "@/lib/utils";
 import { BranchSelectorCompact } from "./branch-selector-compact";
@@ -48,7 +49,24 @@ interface SessionStarterProps {
     vercelProject?: VercelProjectSelection | null;
   }) => void;
   isLoading?: boolean;
-  lastRepo: { owner: string; repo: string } | null;
+  lastRepo: LastRepoInfo | null;
+}
+
+function lastRepoToSelection(
+  lastRepo: LastRepoInfo | null,
+): RepoSelection | null {
+  if (!lastRepo) return null;
+  if (lastRepo.provider === "github") {
+    return { provider: "github", owner: lastRepo.owner, repo: lastRepo.repo };
+  }
+  return {
+    provider: "azure_devops",
+    org: lastRepo.org,
+    project: lastRepo.project,
+    repo: lastRepo.repo,
+    defaultBranch: null,
+    webUrl: lastRepo.webUrl ?? "",
+  };
 }
 
 export function SessionStarter({
@@ -60,9 +78,7 @@ export function SessionStarter({
     lastRepo ? "repo" : "empty",
   );
   const [selection, setSelection] = useState<RepoSelection | null>(() =>
-    lastRepo
-      ? { provider: "github", owner: lastRepo.owner, repo: lastRepo.repo }
-      : null,
+    lastRepoToSelection(lastRepo),
   );
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
   const [isNewBranch, setIsNewBranch] = useState(!!lastRepo);

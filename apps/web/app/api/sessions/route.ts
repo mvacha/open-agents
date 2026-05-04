@@ -14,6 +14,7 @@ import {
 } from "@/lib/db/vercel-project-links";
 import { getUserPreferences } from "@/lib/db/user-preferences";
 import {
+  getEnabledRepoProviders,
   isAzureDevOpsEnabled,
   isGitHubEnabled,
 } from "@/lib/git-providers/feature-flags";
@@ -142,14 +143,16 @@ export async function GET(req: Request) {
       MAX_ARCHIVED_SESSIONS_LIMIT,
     );
     const offset = rawOffset ?? 0;
+    const repoProviders = getEnabledRepoProviders();
 
     const [sessions, archivedCount] = await Promise.all([
       getSessionsWithUnreadByUserId(session.user.id, {
         status: "archived",
         limit,
         offset,
+        repoProviders,
       }),
-      getArchivedSessionCountByUserId(session.user.id),
+      getArchivedSessionCountByUserId(session.user.id, { repoProviders }),
     ]);
 
     return Response.json({
@@ -165,17 +168,22 @@ export async function GET(req: Request) {
   }
 
   if (statusParam === "active") {
+    const repoProviders = getEnabledRepoProviders();
     const [sessions, archivedCount] = await Promise.all([
       getSessionsWithUnreadByUserId(session.user.id, {
         status: "active",
+        repoProviders,
       }),
-      getArchivedSessionCountByUserId(session.user.id),
+      getArchivedSessionCountByUserId(session.user.id, { repoProviders }),
     ]);
 
     return Response.json({ sessions, archivedCount });
   }
 
-  const sessions = await getSessionsWithUnreadByUserId(session.user.id);
+  const repoProviders = getEnabledRepoProviders();
+  const sessions = await getSessionsWithUnreadByUserId(session.user.id, {
+    repoProviders,
+  });
   return Response.json({ sessions });
 }
 

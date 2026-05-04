@@ -1,5 +1,5 @@
 import type { SandboxState } from "@open-harness/sandbox";
-import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { db } from "./client";
 import {
   chatMessages,
@@ -197,6 +197,12 @@ type GetSessionsWithUnreadByUserIdOptions = {
   status?: "all" | "active" | "archived";
   limit?: number;
   offset?: number;
+  /**
+   * If provided, only sessions whose `repoProvider` is in this list (or
+   * sessions with no repo at all) will be returned. Used to hide sessions
+   * tied to a git provider that has been disabled at deployment time.
+   */
+  repoProviders?: Array<"github" | "azure_devops">;
 };
 
 /**
@@ -217,6 +223,13 @@ export async function getSessionsWithUnreadByUserId(
       : status === "archived"
         ? eq(sessions.status, "archived")
         : undefined;
+
+  const providerFilter = options?.repoProviders
+    ? or(
+        isNull(sessions.repoOwner),
+        inArray(sessions.repoProvider, options.repoProviders),
+      )
+    : undefined;
 
   const baseQuery = db
     .select({
@@ -252,11 +265,7 @@ export async function getSessionsWithUnreadByUserId(
       chatReads,
       and(eq(chatReads.chatId, chats.id), eq(chatReads.userId, userId)),
     )
-    .where(
-      statusFilter
-        ? and(eq(sessions.userId, userId), statusFilter)
-        : eq(sessions.userId, userId),
-    )
+    .where(and(eq(sessions.userId, userId), statusFilter, providerFilter))
     .groupBy(sessions.id)
     .orderBy(desc(sessions.createdAt));
 
@@ -275,11 +284,25 @@ export async function getSessionsWithUnreadByUserId(
 
 export async function getArchivedSessionCountByUserId(
   userId: string,
+  options?: { repoProviders?: Array<"github" | "azure_devops"> },
 ): Promise<number> {
+  const providerFilter = options?.repoProviders
+    ? or(
+        isNull(sessions.repoOwner),
+        inArray(sessions.repoProvider, options.repoProviders),
+      )
+    : undefined;
+
   const [result] = await db
     .select({ count: sql<number>`COUNT(*)::int` })
     .from(sessions)
-    .where(and(eq(sessions.userId, userId), eq(sessions.status, "archived")));
+    .where(
+      and(
+        eq(sessions.userId, userId),
+        eq(sessions.status, "archived"),
+        providerFilter,
+      ),
+    );
 
   return result?.count ?? 0;
 }

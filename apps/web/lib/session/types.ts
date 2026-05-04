@@ -17,4 +17,10 @@ export interface SessionUserInfo {
   hasGitHubAccount?: boolean;
   hasGitHubInstallations?: boolean;
   vercelReconnectRequired?: boolean;
+  /**
+   * Deployment-level feature flags for git providers. Reflect the
+   * GITHUB_ENABLED / AZURE_DEVOPS_ENABLED env vars at request time.
+   */
+  gitHubProviderEnabled?: boolean;
+  azureDevOpsProviderEnabled?: boolean;
 }

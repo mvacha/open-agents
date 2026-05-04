@@ -11,11 +11,12 @@ import { SessionStarter } from "@/components/session-starter";
 import { UserAvatarDropdown } from "@/components/user-avatar-dropdown";
 import { useSession } from "@/hooks/use-session";
 import { useSessions } from "@/hooks/use-sessions";
+import type { LastRepoInfo } from "@/lib/db/last-repo";
 import type { VercelProjectSelection } from "@/lib/vercel/types";
 
 interface HomePageProps {
   hasSessionCookie: boolean;
-  lastRepo: { owner: string; repo: string } | null;
+  lastRepo: LastRepoInfo | null;
 }
 
 export function HomePage({ hasSessionCookie, lastRepo }: HomePageProps) {

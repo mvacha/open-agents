@@ -2,11 +2,12 @@
 
 import { History } from "lucide-react";
 import { SessionStarter } from "@/components/session-starter";
+import type { LastRepoInfo } from "@/lib/db/last-repo";
 
 const NOOP = () => {};
 
 interface HomeSkeletonProps {
-  lastRepo?: { owner: string; repo: string } | null;
+  lastRepo?: LastRepoInfo | null;
 }
 
 export function HomeSkeleton({ lastRepo = null }: HomeSkeletonProps) {
